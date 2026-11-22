@@ -58,19 +58,22 @@ void main() {
     final store = ExpenseStore.memory()
       ..setPayFrequency(PayFrequency.weekly)
       ..setPayAmount(1000);
+    // Simple months: weekly × 4, bi-weekly × 2; per year counts every check.
     expect(store.weeklyIncome, closeTo(1000, 0.001));
-    expect(store.income, closeTo(1000 * 52 / 12, 0.001));
+    expect(store.income, closeTo(4000, 0.001));
+    expect(store.yearlyIncome, 52000);
 
     store.setPayFrequency(PayFrequency.biweekly);
     expect(store.weeklyIncome, closeTo(500, 0.001));
-    expect(store.income, closeTo(1000 * 26 / 12, 0.001));
+    expect(store.income, closeTo(2000, 0.001));
+    expect(store.yearlyIncome, 26000);
 
     store
       ..setPayFrequency(PayFrequency.salary)
-      ..setPayAmount(52000);
+      ..setPayAmount(48000);
+    expect(store.income, closeTo(4000, 0.001));
     expect(store.weeklyIncome, closeTo(1000, 0.001));
-    expect(store.income, closeTo(52000 / 12, 0.001));
-    expect(store.yearlyIncome, 52000);
+    expect(store.yearlyIncome, 48000);
 
     store
       ..setPayFrequency(PayFrequency.monthly)
@@ -256,6 +259,13 @@ void main() {
     // Turning it back on doesn't bring the folder back by itself.
     store.setShowRecommended(true);
     expect(store.recommendedOnHome, isFalse);
+  });
+
+  test('A hotfix does not bring the update pop-up back', () {
+    final store = ExpenseStore.memory()
+      ..loadForTest({'payAmount': 3000, 'seenVersion': '1.2'});
+    expect(appVersion, '1.2.1');
+    expect(store.needsUpdateNotice, isFalse);
   });
 
   test('Expired items remove themselves', () {

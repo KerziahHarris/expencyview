@@ -246,7 +246,7 @@ class _UpdateDialog extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                "What's new in version $appVersion",
+                "What's new in version $noticeVersion",
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 14, color: c.muted),
               ),

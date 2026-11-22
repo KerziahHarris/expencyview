@@ -30,7 +30,33 @@
     screen, and it is up to the app to keep its own content out of the way,
     which is what `SafeArea` is for.
   -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
+  <!--
+    iPhone Safari zooms the page in when a text box with small text is
+    selected, which breaks the layout. Flutter replaces this viewport tag at
+    startup (allowing zoom up to 5x), so keep forcing maximum-scale=1.0 on
+    whatever viewport tag is current.
+  -->
+  <script>
+    (function () {
+      function lockZoom() {
+        var tags = document.querySelectorAll('meta[name="viewport"]');
+        for (var i = 0; i < tags.length; i++) {
+          var c = tags[i].getAttribute('content') || '';
+          if (c.indexOf('maximum-scale=1.0') !== -1) continue;
+          c = c.replace(/,?\s*maximum-scale=[\d.]+/, '');
+          tags[i].setAttribute('content', c + ', maximum-scale=1.0');
+        }
+      }
+      lockZoom();
+      new MutationObserver(lockZoom).observe(document.head, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['content'],
+      });
+    })();
+  </script>
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">

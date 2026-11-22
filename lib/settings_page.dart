@@ -307,10 +307,10 @@ class _Breakdown extends StatelessWidget {
                   store.usesBalance
                       ? 'These numbers are estimates. Recurring bills are '
                             'counted at one month\'s cost.'
-                      : 'These numbers are estimates. Weekly and monthly '
-                            'amounts are averaged over a year, so some months '
-                            '(like ones with an extra paycheck) will come out '
-                            'a little different.',
+                      : 'These numbers are estimates. A month is counted '
+                            'as 4 weekly or 2 bi-weekly paychecks, so a few '
+                            'months a year (with an extra paycheck) give you '
+                            'a little more.',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.4,
@@ -413,7 +413,7 @@ class _DuplicateWarning extends StatelessWidget {
 class AppInfoPage extends StatelessWidget {
   const AppInfoPage({super.key});
 
-  static const version = 'Version $appVersion';
+  static const version = 'Version $appVersion · $appReleaseNote';
 
   @override
   Widget build(BuildContext context) {

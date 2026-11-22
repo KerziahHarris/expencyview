@@ -20,21 +20,25 @@ enum FolderType {
 }
 
 /// How the user's money comes in. The entered amount is per paycheck
-/// (or per year for salary) and is converted to monthly for all the math.
+/// (or per year for salary) and is converted to monthly for all the math,
+/// using simple months: weekly × 4, bi-weekly × 2.
 /// [balance] is different: it is a one-off amount on hand, so nothing is
 /// converted and the per-week / per-year breakdowns don't apply.
 enum PayFrequency {
-  monthly('Monthly', 12, 'Monthly income'),
-  weekly('Weekly', 52, 'Weekly paycheck'),
-  biweekly('Bi-weekly', 26, 'Paycheck every 2 weeks'),
-  salary('Salary', 1, 'Yearly salary'),
-  balance('Current balance', 0, 'Current balance');
+  monthly('Monthly', 12, 1, 'Monthly income'),
+  weekly('Weekly', 52, 4, 'Weekly paycheck'),
+  biweekly('Bi-weekly', 26, 2, 'Paycheck every 2 weeks'),
+  salary('Salary', 1, 1 / 12, 'Yearly salary'),
+  balance('Current balance', 0, 0, 'Current balance');
 
-  const PayFrequency(this.label, this.perYear, this.amountLabel);
+  const PayFrequency(this.label, this.perYear, this.perMonth, this.amountLabel);
   final String label;
 
-  /// Paychecks per year (0 for [balance]).
+  /// Paychecks per year (0 for [balance]); used for the yearly total.
   final int perYear;
+
+  /// Paychecks counted per month: 4 weekly, 2 bi-weekly (0 for [balance]).
+  final double perMonth;
 
   /// Label for the amount field in settings.
   final String amountLabel;
@@ -44,7 +48,7 @@ enum PayFrequency {
 
 /// How often a subscription is charged. Totals are always per month.
 enum BillingCycle {
-  weekly('Weekly', 'wk', 52 / 12),
+  weekly('Weekly', 'wk', 4),
   monthly('Monthly', 'mo', 1),
   quarterly('Every 3 months', 'qtr', 1 / 3),
   yearly('Yearly', 'yr', 1 / 12);

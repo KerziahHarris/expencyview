@@ -121,7 +121,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Per week'), findsOneWidget);
-    expect(find.text('\$2,600'), findsNWidgets(2)); // per month + left
+    expect(find.text('\$2,400'), findsNWidgets(2)); // 600 × 4 (month + left)
     expect(find.text('\$31,200'), findsOneWidget); // per year
     expect(find.text('Left to budget / week'), findsOneWidget);
     expect(find.textContaining('These numbers are estimates'), findsOneWidget);
@@ -143,7 +143,7 @@ void main() {
     await tester.tap(find.text('App Info'));
     await tester.pumpAndSettle();
     expect(find.text('Thank you for trying this app.'), findsOneWidget);
-    expect(find.text('Version 1.2'), findsOneWidget);
+    expect(find.text('Version 1.2.1 · Hotfix'), findsOneWidget);
     // The privacy disclaimer lives on App Info.
     expect(
       find.textContaining('Nothing you enter is shared or sold'),

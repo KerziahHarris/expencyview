@@ -6,8 +6,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'budget.dart';
 import 'models.dart';
 
-/// Current app version (shown on App Info; drives the update pop-up).
-const appVersion = '1.2';
+/// Current app version, shown on App Info.
+const appVersion = '1.2.1';
+
+/// What kind of release [appVersion] is (shown next to it on App Info).
+const appReleaseNote = 'Hotfix';
+
+/// The release whose "what's new" pop-up existing users get once. Hotfixes
+/// don't change it, so they don't bring the pop-up back.
+const noticeVersion = '1.2';
 
 /// App state + persistence. Widgets listen to it with ListenableBuilder.
 class ExpenseStore extends ChangeNotifier {
@@ -30,23 +37,23 @@ class ExpenseStore extends ChangeNotifier {
   /// True when a current balance is used instead of a recurring income.
   bool get usesBalance => payFrequency.isBalance;
 
-  double? get _yearly => payAmount == null || usesBalance
+  /// The amount every total on home is measured against: monthly income
+  /// (weekly × 4, bi-weekly × 2, salary ÷ 12), or the current balance as-is.
+  double? get income => payAmount == null
+      ? null
+      : usesBalance
+      ? payAmount
+      : payAmount! * payFrequency.perMonth;
+
+  /// Income per week: a month is counted as 4 weeks (null in balance mode).
+  double? get weeklyIncome =>
+      income == null || usesBalance ? null : income! / 4;
+
+  /// Real income per year: every paycheck (weekly × 52, bi-weekly × 26)
+  /// (null in balance mode).
+  double? get yearlyIncome => payAmount == null || usesBalance
       ? null
       : payAmount! * payFrequency.perYear;
-
-  /// The amount every total on home is measured against: monthly income, or
-  /// the current balance as-is.
-  double? get income => usesBalance
-      ? payAmount
-      : _yearly == null
-      ? null
-      : _yearly! / 12;
-
-  /// Income per week (null in balance mode).
-  double? get weeklyIncome => _yearly == null ? null : _yearly! / 52;
-
-  /// Income per year (null in balance mode).
-  double? get yearlyIncome => _yearly;
 
   /// Which home-page containers are shown (Settings switches).
   final Map<FolderType, bool> _showSection = {
@@ -86,10 +93,10 @@ class ExpenseStore extends ChangeNotifier {
 
   /// The app version whose "what's new" pop-up this user has seen. Saves from
   /// before 1.2 have none, so existing users get the update pop-up once.
-  String? seenVersion = appVersion;
+  String? seenVersion = noticeVersion;
 
   /// True when an existing user hasn't seen this version's update pop-up.
-  bool get needsUpdateNotice => seenWelcome && seenVersion != appVersion;
+  bool get needsUpdateNotice => seenWelcome && seenVersion != noticeVersion;
 
   static Future<ExpenseStore> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -168,9 +175,9 @@ class ExpenseStore extends ChangeNotifier {
   /// Remaining_Income = Income - Expense_Total - savings paid from income.
   double get whatsLeft => (income ?? 0) - incomeUsed;
 
-  /// Remaining Income spread over a week (monthly × 12 ÷ 52). Not meaningful
+  /// Remaining Income per week (a month counted as 4 weeks). Not meaningful
   /// in balance mode.
-  double get whatsLeftWeekly => whatsLeft * 12 / 52;
+  double get whatsLeftWeekly => whatsLeft / 4;
 
   /// Everything paid out of income: expenses + savings flagged "from income".
   double get incomeUsed =>
@@ -254,9 +261,7 @@ class ExpenseStore extends ChangeNotifier {
   /// Sets income from a monthly figure (converted to the current frequency;
   /// used as-is in balance mode).
   void setIncome(double? monthly) => setPayAmount(
-    monthly == null || usesBalance
-        ? monthly
-        : monthly * 12 / payFrequency.perYear,
+    monthly == null || usesBalance ? monthly : monthly / payFrequency.perMonth,
   );
 
   void setShowSection(FolderType t, bool v) {
@@ -322,12 +327,12 @@ class ExpenseStore extends ChangeNotifier {
 
   void markWelcomeSeen() {
     seenWelcome = true;
-    seenVersion = appVersion;
+    seenVersion = noticeVersion;
     _changed();
   }
 
   void markUpdateSeen() {
-    seenVersion = appVersion;
+    seenVersion = noticeVersion;
     _changed();
   }
 
@@ -336,7 +341,7 @@ class ExpenseStore extends ChangeNotifier {
   Future<void> clearAllData() async {
     _fromJson(const {});
     seenWelcome = false;
-    seenVersion = appVersion;
+    seenVersion = noticeVersion;
     notifyListeners();
     await _prefs?.remove(_key);
   }
