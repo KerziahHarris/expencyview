@@ -37,11 +37,35 @@ class ChartPage extends StatelessWidget {
       slices.add(_Slice(f.name, value, color));
       i++;
     }
+    if (store.currentContribution > 0) {
+      slices.add(
+        _Slice(
+          'Current budget',
+          store.currentContribution,
+          context.colors.leftAmber,
+        ),
+      );
+    }
+    if (store.recommendedContribution > 0) {
+      slices.add(
+        _Slice(
+          'Recommended budget',
+          store.recommendedContribution,
+          context.colors.expenseBlue,
+        ),
+      );
+    }
     // Unspent income (whatever's left after everything above).
     final spent = slices.fold<double>(0, (s, x) => s + x.value);
     final left = (store.income ?? 0) - spent;
     if (left > 0) {
-      slices.add(_Slice('Remaining income', left, context.colors.muted));
+      slices.add(
+        _Slice(
+          store.usesBalance ? 'Remaining balance' : 'Remaining income',
+          left,
+          context.colors.muted,
+        ),
+      );
     }
     return slices;
   }
@@ -60,8 +84,10 @@ class ChartPage extends StatelessWidget {
           style: TextStyle(fontSize: 26, color: context.colors.text),
         ),
         Text(
-          'Income ${money(store.income ?? 0)} / month · '
-          '${money(store.weeklyIncome ?? 0)} / week',
+          store.usesBalance
+              ? 'Balance ${money(store.income ?? 0)}'
+              : 'Income ${money(store.income ?? 0)} / month · '
+                    '${money(store.weeklyIncome ?? 0)} / week',
           textAlign: TextAlign.center,
           style: TextStyle(color: context.colors.muted, fontSize: 16),
         ),

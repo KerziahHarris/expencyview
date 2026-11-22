@@ -30,7 +30,9 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+# Build output (also matches a symlinked build folder and iCloud
+# duplicates like "build 2")
+/build*
 /coverage/
 
 # Symbolication related
@@ -39,10 +41,6 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
 
 # Widget Preview related
 .widget_preview/
@@ -50,3 +48,9 @@ app.*.map.json
 # Editor files from the C/C++ Runner extension (not used by this project)
 .vscode/c_cpp_properties.json
 .vscode/settings.json
+
+# This is a web-only app. Flutter tools sometimes regenerate small helper
+# files for other platforms; never commit them.
+/android/
+/ios/
+/macos/

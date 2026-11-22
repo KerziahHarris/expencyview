@@ -1,9 +1,11 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'budget_page.dart';
 import 'models.dart';
 import 'store.dart';
 import 'theme.dart';
+import 'welcome.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key, required this.store});
@@ -47,24 +49,25 @@ class _SettingsPageState extends State<SettingsPage> {
         builder: (context, _) => ListView(
           padding: const EdgeInsets.all(20),
           children: [
-            const Text(
-              'Income',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-            ),
+            const _Heading('Income'),
             const SizedBox(height: 4),
             Text(
-              'How often do you get paid?',
+              'How do you want to enter your money?',
               style: TextStyle(color: context.colors.muted),
             ),
             const SizedBox(height: 12),
-            SegmentedButton<PayFrequency>(
-              showSelectedIcon: false,
-              segments: [
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
                 for (final f in PayFrequency.values)
-                  ButtonSegment(value: f, label: Text(f.label)),
+                  ChoiceChip(
+                    label: Text(f.label),
+                    selected: store.payFrequency == f,
+                    showCheckmark: false,
+                    onSelected: (_) => store.setPayFrequency(f),
+                  ),
               ],
-              selected: {store.payFrequency},
-              onSelectionChanged: (s) => store.setPayFrequency(s.first),
             ),
             const SizedBox(height: 16),
             TextField(
@@ -77,7 +80,11 @@ class _SettingsPageState extends State<SettingsPage> {
               ],
               decoration: InputDecoration(
                 labelText: store.payFrequency.amountLabel,
-                helperText: 'After taxes',
+                helperText: store.usesBalance
+                    ? 'Money you have right now. Expenses are taken straight '
+                          'from it, with no weekly or monthly conversions.'
+                    : 'After taxes',
+                helperMaxLines: 3,
                 prefixText: '\$ ',
                 border: const OutlineInputBorder(),
               ),
@@ -87,26 +94,98 @@ class _SettingsPageState extends State<SettingsPage> {
               const SizedBox(height: 16),
               _Breakdown(store: store),
             ],
-            const SizedBox(height: 12),
+            const SizedBox(height: 28),
+            const _Heading('Home page'),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Show Remaining Income'),
+              title: Text(
+                store.usesBalance
+                    ? 'Show Remaining Balance'
+                    : 'Show Remaining Income',
+              ),
               subtitle: const Text(
-                'Income minus expenses and savings taken from income',
+                'What\'s left after expenses and savings taken from it',
               ),
               value: store.showWhatsLeft,
               onChanged: store.hasIncome ? store.setShowWhatsLeft : null,
             ),
+            for (final t in FolderType.values)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Show ${t.label}'),
+                value: store.showsSection(t),
+                onChanged: (v) => store.setShowSection(t, v),
+              ),
             if (!store.hasIncome)
               Text(
-                'Enter your income to unlock Remaining Income and the chart page.',
+                'Enter your income to unlock Remaining Income, the chart '
+                'and the recommended budget.',
                 style: TextStyle(color: context.colors.muted),
               ),
             const SizedBox(height: 28),
-            const Text(
-              'Appearance',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+            const _Heading('Budget'),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Show current budget as a folder'),
+              subtitle: const Text(
+                'What you spend per category (Add budget), at the top of home',
+              ),
+              value: store.currentOnHome,
+              onChanged: store.setCurrentOnHome,
             ),
+            if (store.currentOnHome) ...[
+              SwitchListTile(
+                contentPadding: const EdgeInsets.only(left: 16),
+                title: const Text('Count it in my totals'),
+                subtitle: Text(
+                  store.currentCounts
+                      ? 'Counted in Monthly Expense and Remaining Income'
+                      : 'Off — shown for reference only',
+                ),
+                value: store.currentCounts,
+                onChanged: store.setCurrentCounts,
+              ),
+              if (store.currentCounts) const _DuplicateWarning(),
+            ],
+            const SizedBox(height: 28),
+            const _Heading('Recommended budget'),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Show recommended budget'),
+              subtitle: const Text(
+                'Adds a Budget tab that splits your income into everyday '
+                'categories for your household',
+              ),
+              value: store.showRecommended,
+              onChanged: store.hasIncome ? store.setShowRecommended : null,
+            ),
+            if (store.showRecommended && store.hasIncome) ...[
+              const SizedBox(height: 4),
+              HouseholdStepper(store: store),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Show recommended budget as a folder'),
+                subtitle: const Text('Read-only; it updates on its own'),
+                value: store.recommendedOnHome,
+                onChanged: store.setRecommendedOnHome,
+              ),
+              if (store.recommendedOnHome) ...[
+                SwitchListTile(
+                  contentPadding: const EdgeInsets.only(left: 16),
+                  title: const Text('Count it in my totals'),
+                  subtitle: Text(
+                    store.recommendedCounts
+                        ? 'Counted in Monthly Expense and Remaining Income'
+                        : 'Off — shown as a guide only',
+                  ),
+                  value: store.recommendedCounts,
+                  onChanged: store.setRecommendedCounts,
+                ),
+                if (store.recommendedCounts) const _DuplicateWarning(),
+              ],
+            ],
+            const SizedBox(height: 28),
+            const _Heading('Appearance'),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               secondary: Icon(
@@ -132,6 +211,18 @@ class _SettingsPageState extends State<SettingsPage> {
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const AppInfoPage()),
               ),
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.delete_forever_outlined,
+                color: context.colors.negative,
+              ),
+              title: Text(
+                'Clear all data',
+                style: TextStyle(color: context.colors.negative, fontSize: 15),
+              ),
+              onTap: () => confirmClearAllData(context, store),
             ),
           ],
         ),
@@ -186,14 +277,25 @@ class _Breakdown extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          row('Per week', store.weeklyIncome!),
-          if (store.payFrequency == PayFrequency.biweekly)
-            row('Per paycheck', store.payAmount!),
-          row('Per month', store.income!),
-          row('Per year', store.yearlyIncome!),
-          Divider(color: context.colors.cardBorder, height: 20),
-          row('Left to budget / week', store.whatsLeftWeekly, color: leftColor),
-          row('Left to budget / month', left, color: leftColor),
+          if (store.usesBalance) ...[
+            row('Current balance', store.income!),
+            row('Expenses & savings', store.incomeUsed),
+            Divider(color: context.colors.cardBorder, height: 20),
+            row('Left after expenses', left, color: leftColor),
+          ] else ...[
+            row('Per week', store.weeklyIncome!),
+            if (store.payFrequency == PayFrequency.biweekly)
+              row('Per paycheck', store.payAmount!),
+            row('Per month', store.income!),
+            row('Per year', store.yearlyIncome!),
+            Divider(color: context.colors.cardBorder, height: 20),
+            row(
+              'Left to budget / week',
+              store.whatsLeftWeekly,
+              color: leftColor,
+            ),
+            row('Left to budget / month', left, color: leftColor),
+          ],
           const SizedBox(height: 10),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -202,9 +304,13 @@ class _Breakdown extends StatelessWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  'These numbers are estimates. Weekly and monthly amounts are '
-                  'averaged over a year, so some months (like ones with an '
-                  'extra paycheck) will come out a little different.',
+                  store.usesBalance
+                      ? 'These numbers are estimates. Recurring bills are '
+                            'counted at one month\'s cost.'
+                      : 'These numbers are estimates. Weekly and monthly '
+                            'amounts are averaged over a year, so some months '
+                            '(like ones with an extra paycheck) will come out '
+                            'a little different.',
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.4,
@@ -220,11 +326,94 @@ class _Breakdown extends StatelessWidget {
   }
 }
 
+/// Privacy disclaimer on the App Info page.
+class _PrivacyNote extends StatelessWidget {
+  const _PrivacyNote();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.section,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.lock_outline, size: 18, color: c.muted),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Your data stays with you. Nothing you enter is shared or sold. '
+              'All information is saved only on this device, and it will be '
+              'removed if the app is deleted or the browser cache / site data '
+              'is cleared.',
+              style: TextStyle(fontSize: 12, height: 1.45, color: c.muted),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Section title in Settings.
+class _Heading extends StatelessWidget {
+  const _Heading(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    text,
+    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+  );
+}
+
+/// Shown when the recommended budget is counted in totals.
+class _DuplicateWarning extends StatelessWidget {
+  const _DuplicateWarning();
+
+  @override
+  Widget build(BuildContext context) {
+    final amber = context.colors.leftAmber;
+    return Container(
+      margin: const EdgeInsets.only(top: 4, left: 16),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: amber.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: amber.withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: amber),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Heads up: expenses you already added yourself (like rent or '
+              'groceries) may now be counted twice, once in your folders and '
+              'once in the recommended budget.',
+              style: TextStyle(
+                fontSize: 13,
+                height: 1.4,
+                color: context.colors.text,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// About page reached from the quiet "App Info" row in settings.
 class AppInfoPage extends StatelessWidget {
   const AppInfoPage({super.key});
 
-  static const version = 'Version 1';
+  static const version = 'Version $appVersion';
 
   @override
   Widget build(BuildContext context) {
@@ -243,6 +432,7 @@ class AppInfoPage extends StatelessWidget {
               'assets/icon/logo_mark.png',
               width: 72,
               height: 72,
+              color: context.colors.muted,
               semanticLabel: 'ExpencyView logo',
             ),
           ),
@@ -301,6 +491,8 @@ class AppInfoPage extends StatelessWidget {
               ],
             ),
           ),
+          const SizedBox(height: 16),
+          const _PrivacyNote(),
           const SizedBox(height: 24),
           Text(
             version,

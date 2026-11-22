@@ -22,6 +22,78 @@ Future<void> showFolderEditor(
   );
 }
 
+/// "New expense" / "New savings" / "New subscription".
+String newItemLabel(FolderType t) => switch (t) {
+  FolderType.expense => 'New expense',
+  FolderType.savings => 'New savings',
+  FolderType.subscription => 'New subscription',
+};
+
+/// The container "+ Add" sheet: a switch between adding an item straight to
+/// the container (default) or a new folder with the usual folder settings.
+Future<void> showAddToContainer(
+  BuildContext context,
+  ExpenseStore store,
+  FolderType type,
+) {
+  return showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: context.colors.pill,
+    builder: (_) => _AddToContainer(store: store, type: type),
+  );
+}
+
+class _AddToContainer extends StatefulWidget {
+  const _AddToContainer({required this.store, required this.type});
+
+  final ExpenseStore store;
+  final FolderType type;
+
+  @override
+  State<_AddToContainer> createState() => _AddToContainerState();
+}
+
+class _AddToContainerState extends State<_AddToContainer> {
+  bool _folder = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final choice = SegmentedButton<bool>(
+      showSelectedIcon: false,
+      segments: [
+        ButtonSegment(
+          value: false,
+          icon: const Icon(Icons.receipt_long_outlined, size: 18),
+          label: Text(newItemLabel(widget.type)),
+        ),
+        const ButtonSegment(
+          value: true,
+          icon: Icon(Icons.create_new_folder_outlined, size: 18),
+          label: Text('New folder'),
+        ),
+      ],
+      selected: {_folder},
+      onSelectionChanged: (s) => setState(() => _folder = s.first),
+    );
+    return _folder
+        ? _FolderEditor(
+            key: const ValueKey('folder'),
+            store: widget.store,
+            folder: null,
+            initialType: widget.type,
+            fixedType: true,
+            top: choice,
+          )
+        : _FileEditor(
+            key: const ValueKey('item'),
+            store: widget.store,
+            folder: widget.store.looseOf(widget.type),
+            top: choice,
+          );
+  }
+}
+
 /// Asks before deleting [folder] (and everything in it). Returns true if
 /// the folder was deleted.
 Future<bool> confirmDeleteFolder(
@@ -63,14 +135,22 @@ Future<bool> confirmDeleteFolder(
 
 class _FolderEditor extends StatefulWidget {
   const _FolderEditor({
+    super.key,
     required this.store,
     required this.folder,
     required this.initialType,
+    this.top,
+    this.fixedType = false,
   });
 
   final ExpenseStore store;
   final Folder? folder;
   final FolderType initialType;
+  final Widget? top;
+
+  /// Created from a container: the container decides the type, so the
+  /// Expense / Savings picker is hidden.
+  final bool fixedType;
 
   @override
   State<_FolderEditor> createState() => _FolderEditorState();
@@ -127,6 +207,7 @@ class _FolderEditorState extends State<_FolderEditor> {
   @override
   Widget build(BuildContext context) {
     return _SheetFrame(
+      top: widget.top,
       title: _isNew ? 'New folder' : 'Folder settings',
       onSave: _save,
       onDelete: _isNew
@@ -147,14 +228,22 @@ class _FolderEditorState extends State<_FolderEditor> {
           decoration: const InputDecoration(labelText: 'Folder name'),
           onSubmitted: (_) => _save(),
         ),
-        const SizedBox(height: 16),
-        SegmentedButton<FolderType>(
-          segments: const [
-            ButtonSegment(value: FolderType.expense, label: Text('Expense')),
-            ButtonSegment(value: FolderType.savings, label: Text('Savings')),
-          ],
-          selected: {_type},
-          onSelectionChanged: (s) => setState(() => _type = s.first),
+        if (!widget.fixedType) ...[
+          const SizedBox(height: 16),
+          SegmentedButton<FolderType>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: FolderType.expense, label: Text('Expense')),
+              ButtonSegment(value: FolderType.savings, label: Text('Savings')),
+            ],
+            selected: {_type},
+            onSelectionChanged: (s) => setState(() => _type = s.first),
+          ),
+        ],
+        const SizedBox(height: 4),
+        Text(
+          'How it shows on home',
+          style: TextStyle(fontSize: 13, color: context.colors.muted),
         ),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
@@ -191,11 +280,18 @@ Future<void> showFileEditor(
 }
 
 class _FileEditor extends StatefulWidget {
-  const _FileEditor({required this.store, required this.folder, this.file});
+  const _FileEditor({
+    super.key,
+    required this.store,
+    required this.folder,
+    this.file,
+    this.top,
+  });
 
   final ExpenseStore store;
   final Folder folder;
   final EntryFile? file;
+  final Widget? top;
 
   @override
   State<_FileEditor> createState() => _FileEditorState();
@@ -207,11 +303,14 @@ class _FileEditorState extends State<_FileEditor> {
   late final TextEditingController _days;
   late bool _includeAsExpense;
   late bool _fromIncome;
+  late bool _paused;
+  late BillingCycle _cycle;
   String? _error;
   String? _daysError;
 
   bool get _isNew => widget.file == null;
   bool get _isSavings => widget.folder.type == FolderType.savings;
+  bool get _isSubscription => widget.folder.type == FolderType.subscription;
 
   @override
   void initState() {
@@ -225,6 +324,8 @@ class _FileEditorState extends State<_FileEditor> {
     _days = TextEditingController(text: left == null ? '' : '$left');
     _includeAsExpense = f?.includeAsMonthlyExpense ?? false;
     _fromIncome = f?.fromIncome ?? false;
+    _paused = f?.paused ?? false;
+    _cycle = f?.cycle ?? BillingCycle.monthly;
   }
 
   @override
@@ -273,6 +374,8 @@ class _FileEditorState extends State<_FileEditor> {
           fromIncome: _isSavings && _fromIncome,
           includeAsMonthlyExpense:
               _isSavings && _fromIncome && _includeAsExpense,
+          paused: _paused,
+          cycle: _isSubscription ? _cycle : BillingCycle.monthly,
         ),
       );
     } else {
@@ -282,7 +385,9 @@ class _FileEditorState extends State<_FileEditor> {
         ..expiresOn = expiresOn
         ..fromIncome = _isSavings && _fromIncome
         ..includeAsMonthlyExpense =
-            _isSavings && _fromIncome && _includeAsExpense;
+            _isSavings && _fromIncome && _includeAsExpense
+        ..paused = _paused
+        ..cycle = _isSubscription ? _cycle : BillingCycle.monthly;
       widget.store.updateFolder();
     }
     Navigator.pop(context);
@@ -299,8 +404,11 @@ class _FileEditorState extends State<_FileEditor> {
   @override
   Widget build(BuildContext context) {
     return _SheetFrame(
+      top: widget.top,
       title: _isNew
-          ? 'Add to ${widget.folder.name}'
+          ? (widget.folder.loose
+                ? newItemLabel(widget.folder.type)
+                : 'Add to ${widget.folder.name}')
           : 'Edit ${widget.file!.name}',
       onSave: _save,
       onDelete: _isNew
@@ -324,12 +432,24 @@ class _FileEditorState extends State<_FileEditor> {
             FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
           ],
           decoration: InputDecoration(
-            labelText: 'Amount',
+            labelText: _isSubscription ? 'Price' : 'Amount',
             prefixText: '\$ ',
             errorText: _error,
           ),
           onSubmitted: (_) => _save(),
         ),
+        if (_isSubscription) ...[
+          const SizedBox(height: 16),
+          DropdownButtonFormField<BillingCycle>(
+            initialValue: _cycle,
+            decoration: const InputDecoration(labelText: 'Billed'),
+            items: [
+              for (final c in BillingCycle.values)
+                DropdownMenuItem(value: c, child: Text(c.label)),
+            ],
+            onChanged: (v) => setState(() => _cycle = v ?? _cycle),
+          ),
+        ],
         const SizedBox(height: 16),
         TextField(
           controller: _days,
@@ -365,6 +485,13 @@ class _FileEditorState extends State<_FileEditor> {
               onChanged: (v) => setState(() => _includeAsExpense = v),
             ),
         ],
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Paused'),
+          subtitle: const Text('Keeps it listed but leaves it out of totals'),
+          value: _paused,
+          onChanged: (v) => setState(() => _paused = v),
+        ),
       ],
     );
   }
@@ -377,8 +504,11 @@ class _SheetFrame extends StatelessWidget {
     required this.children,
     required this.onSave,
     this.onDelete,
+    this.top,
   });
 
+  /// Optional widget above the title (the New item / New folder switch).
+  final Widget? top;
   final String title;
   final List<Widget> children;
   final VoidCallback onSave;
@@ -398,6 +528,7 @@ class _SheetFrame extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (top != null) ...[top!, const SizedBox(height: 16)],
             Text(title, style: Theme.of(context).textTheme.titleLarge),
             const SizedBox(height: 16),
             ...children,

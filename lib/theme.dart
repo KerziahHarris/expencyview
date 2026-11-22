@@ -1,5 +1,9 @@
 import 'package:material_ui/material_ui.dart';
 
+/// Whole-app zoom: everything is drawn at 75% of its designed size so the
+/// app fits small phone screens (see `UiScale` in main.dart).
+const double kUiScale = 0.75;
+
 /// The app's color palette. There is one for dark mode (the original mockup
 /// colors) and one for light mode; widgets read the active one with
 /// `context.colors`, so they repaint when the mode changes.
@@ -14,6 +18,7 @@ class AppColors extends ThemeExtension<AppColors> {
     required this.row,
     required this.expenseBlue,
     required this.savingsGreen,
+    required this.subscriptionPurple,
     required this.leftAmber,
     required this.negative,
     required this.muted,
@@ -41,6 +46,7 @@ class AppColors extends ThemeExtension<AppColors> {
 
   final Color expenseBlue;
   final Color savingsGreen;
+  final Color subscriptionPurple;
   final Color leftAmber;
   final Color negative;
   final Color muted;
@@ -62,6 +68,7 @@ class AppColors extends ThemeExtension<AppColors> {
     row: Color(0xFF36383D),
     expenseBlue: Color(0xFF7DD3FC),
     savingsGreen: Color(0xFF64FFDA),
+    subscriptionPurple: Color(0xFFC4B5FD),
     leftAmber: Color(0xFFFFD180),
     negative: Color(0xFFFF8A80),
     muted: Color(0xFF8A8D90),
@@ -81,6 +88,7 @@ class AppColors extends ThemeExtension<AppColors> {
     row: Color(0xFFF1F3F5),
     expenseBlue: Color(0xFF0284C7),
     savingsGreen: Color(0xFF0F8A7E),
+    subscriptionPurple: Color(0xFF7C3AED),
     leftAmber: Color(0xFFB45309),
     negative: Color(0xFFDC2626),
     muted: Color(0xFF6B7280),

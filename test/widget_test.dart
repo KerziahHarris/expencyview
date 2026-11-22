@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:expensive/main.dart';
+import 'package:expensive/budget.dart';
 import 'package:expensive/models.dart';
 import 'package:expensive/store.dart';
 
@@ -102,6 +103,159 @@ void main() {
 
     store.togglePaused(gym);
     expect(store.expenseTotal, 1050);
+  });
+
+  test('Subscriptions are normalized to monthly and count as expenses', () {
+    final store = ExpenseStore.memory();
+    final subs = store.subscriptions;
+    store
+      ..addFile(subs, EntryFile(name: 'Music', value: 10))
+      ..addFile(
+        subs,
+        EntryFile(name: 'Cloud', value: 120, cycle: BillingCycle.yearly),
+      )
+      ..addFile(
+        subs,
+        EntryFile(name: 'Box', value: 30, cycle: BillingCycle.quarterly),
+      )
+      ..setIncome(1000);
+    expect(store.expenseTotal, closeTo(30, 0.001)); // 10 + 10 + 10
+    expect(store.whatsLeft, closeTo(970, 0.001));
+  });
+
+  test('Paused items are left out, the rest of the folder still counts', () {
+    final store = ExpenseStore.memory();
+    final bills = Folder(name: 'Bills', type: FolderType.expense);
+    final gym = EntryFile(name: 'Gym', value: 50);
+    store
+      ..addFolder(bills)
+      ..addFile(bills, EntryFile(name: 'Rent', value: 1000))
+      ..addFile(bills, gym);
+    expect(store.expenseTotal, 1050);
+    store.toggleFilePaused(gym);
+    expect(store.expenseTotal, 1000);
+    expect(bills.total, 1000);
+  });
+
+  test('Current balance replaces income, no weekly figures', () {
+    final store = ExpenseStore.memory();
+    expect(store.payFrequency, PayFrequency.monthly); // default
+    final bills = Folder(name: 'Bills', type: FolderType.expense);
+    store
+      ..addFolder(bills)
+      ..addFile(bills, EntryFile(name: 'Rent', value: 800))
+      ..setPayFrequency(PayFrequency.balance)
+      ..setPayAmount(2500);
+    expect(store.income, 2500);
+    expect(store.weeklyIncome, isNull);
+    expect(store.yearlyIncome, isNull);
+    expect(store.whatsLeft, 1700);
+  });
+
+  test('Recommended budget adds up and grows per-person costs', () {
+    final one = recommendedBudget(4000, 1);
+    final four = recommendedBudget(4000, 4);
+    double sum(List<BudgetLine> l) => l.fold(0, (s, x) => s + x.amount);
+    expect(sum(one), closeTo(4000, 0.01));
+    expect(sum(four), closeTo(4000, 0.01));
+    double groceries(List<BudgetLine> l) =>
+        l.firstWhere((x) => x.category.name == 'Groceries').amount;
+    double housing(List<BudgetLine> l) =>
+        l.firstWhere((x) => x.category.name == 'Housing').amount;
+    expect(groceries(four), greaterThan(groceries(one)));
+    expect(housing(four), lessThan(housing(one)));
+  });
+
+  test('Recommended budget only counts when every switch is on', () {
+    final store = ExpenseStore.memory()..setIncome(3000);
+    store
+      ..setShowRecommended(true)
+      ..setRecommendedCounts(true);
+    expect(store.expenseTotal, 0); // not on home yet
+    store.setRecommendedOnHome(true);
+    expect(store.expenseTotal, closeTo(3000, 0.01));
+    store.setRecommendedCounts(false);
+    expect(store.expenseTotal, 0); // guide only
+  });
+
+  test('Switched-off recommended lines are not counted', () {
+    final store = ExpenseStore.memory()
+      ..setIncome(3000)
+      ..setShowRecommended(true)
+      ..setRecommendedOnHome(true)
+      ..setRecommendedCounts(true);
+    final housing = store.recommendedLines.firstWhere(
+      (l) => l.category.name == 'Housing',
+    );
+    expect(store.expenseTotal, closeTo(3000, 0.01));
+    store.setRecommendedLineOn(housing.category.id, false);
+    expect(store.expenseTotal, closeTo(3000 - housing.amount, 0.01));
+    store.setRecommendedLineOn(housing.category.id, true);
+    expect(store.expenseTotal, closeTo(3000, 0.01));
+  });
+
+  test('Current budget only counts when its switches are on', () {
+    final store = ExpenseStore.memory()
+      ..setIncome(3000)
+      ..setShowRecommended(true)
+      ..setActualSpending('housing', 1200)
+      ..setActualSpending('groceries', 300);
+    expect(store.currentBudget.map((e) => e.$1.name), ['Housing', 'Groceries']);
+    expect(store.currentOnHome, isTrue); // on by default
+    expect(store.recommendedOnHome, isFalse); // off by default
+    expect(store.currentCounts, isTrue); // counted by default
+    expect(store.expenseTotal, 1500);
+    store.setCurrentCounts(false);
+    expect(store.expenseTotal, 0);
+    store.setCurrentCounts(true);
+    expect(store.expenseTotal, 1500);
+    store.setCurrentOnHome(false);
+    expect(store.expenseTotal, 0); // hidden folders never count
+    store.setCurrentOnHome(true);
+    expect(store.whatsLeft, 1500);
+  });
+
+  test('Old subscription folders are merged into one list', () {
+    final store = ExpenseStore.memory();
+    final saved = {
+      'folders': [
+        {
+          'name': 'Streaming',
+          'type': 'subscription',
+          'files': [
+            {'name': 'Music', 'value': 10},
+          ],
+        },
+        {
+          'name': 'Apps',
+          'type': 'subscription',
+          'paused': true,
+          'files': [
+            {'name': 'Notes', 'value': 5},
+          ],
+        },
+      ],
+    };
+    store.loadForTest(saved);
+    expect(store.foldersOf(FolderType.subscription), isEmpty); // no folders
+    expect(
+      store.folders.where((f) => f.type == FolderType.subscription),
+      hasLength(1),
+    );
+    expect(store.subscriptions.files.map((f) => f.name), ['Music', 'Notes']);
+    expect(store.expenseTotal, 10); // the paused folder's item stays paused
+  });
+
+  test('Turning off the recommended budget turns off its folder too', () {
+    final store = ExpenseStore.memory()
+      ..setIncome(3000)
+      ..setShowRecommended(true)
+      ..setRecommendedOnHome(true);
+    store.setShowRecommended(false);
+    expect(store.recommendedOnHome, isFalse);
+    // Turning it back on doesn't bring the folder back by itself.
+    store.setShowRecommended(true);
+    expect(store.recommendedOnHome, isFalse);
   });
 
   test('Expired items remove themselves', () {

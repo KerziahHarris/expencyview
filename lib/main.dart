@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import 'budget_page.dart';
 import 'chart_page.dart';
 import 'home_page.dart';
 import 'settings_page.dart';
 import 'store.dart';
 import 'theme.dart';
+import 'welcome.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -30,14 +32,63 @@ class ExpenseApp extends StatelessWidget {
         theme: buildTheme(Brightness.light),
         darkTheme: buildTheme(Brightness.dark),
         themeMode: store.darkMode ? ThemeMode.dark : ThemeMode.light,
+        builder: (context, child) => UiScale(child: child!),
         home: AppShell(store: store),
       ),
     );
   }
 }
 
+/// Draws the whole app (pages, sheets, dialogs) at [kUiScale] of its normal
+/// size, like zooming a web page out, so it fits small screens better.
+class UiScale extends StatelessWidget {
+  const UiScale({super.key, required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    const s = kUiScale;
+    final mq = MediaQuery.of(context);
+    final size = mq.size / s;
+    return MediaQuery(
+      data: mq.copyWith(
+        size: size,
+        padding: mq.padding / s,
+        viewPadding: mq.viewPadding / s,
+        viewInsets: mq.viewInsets / s,
+        devicePixelRatio: mq.devicePixelRatio * s,
+      ),
+      child: ClipRect(
+        child: OverflowBox(
+          alignment: Alignment.topLeft,
+          minWidth: size.width,
+          maxWidth: size.width,
+          minHeight: size.height,
+          maxHeight: size.height,
+          child: Transform.scale(
+            scale: s,
+            alignment: Alignment.topLeft,
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum AppTab {
+  home('Home', Icons.home_rounded),
+  chart('Chart', Icons.pie_chart_rounded),
+  budget('Budget', Icons.receipt_long_rounded);
+
+  const AppTab(this.label, this.icon);
+  final String label;
+  final IconData icon;
+}
+
 /// Top bar with the settings gear, the current page, and — once income is
-/// entered — floating Home / Chart buttons at the bottom.
+/// entered — small Home / Chart (/ Budget) buttons at the bottom.
 class AppShell extends StatefulWidget {
   const AppShell({super.key, required this.store});
 
@@ -48,8 +99,31 @@ class AppShell extends StatefulWidget {
 }
 
 class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
-  int _page = 0; // 0 = home, 1 = chart
+  AppTab _tab = AppTab.home;
   Timer? _expiryTimer;
+  bool _welcomeOpen = false;
+
+  /// Shows the welcome pop-up for a first-time user (also after "Clear all
+  /// data"), or the one-time update pop-up for an existing user, once the
+  /// current frame is drawn.
+  void _maybeWelcome(ExpenseStore store) {
+    if (_welcomeOpen) return;
+    if (store.seenWelcome && !store.needsUpdateNotice) return;
+    _welcomeOpen = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      setState(() => _tab = AppTab.home);
+      if (!store.seenWelcome) {
+        await showWelcome(context, store);
+      } else {
+        // Existing user, first launch of this version.
+        await showUpdateNotice(context, store);
+      }
+      _welcomeOpen = false;
+      // "Start fresh" makes them a new user: welcome them next.
+      if (mounted && !store.seenWelcome) _maybeWelcome(store);
+    });
+  }
 
   @override
   void initState() {
@@ -75,14 +149,23 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  /// Tabs that currently exist: Chart needs income; Budget also needs the
+  /// recommended-budget setting.
+  List<AppTab> _tabs(ExpenseStore store) => [
+    if (store.hasIncome && store.showRecommended) AppTab.budget,
+    AppTab.home,
+    if (store.hasIncome) AppTab.chart,
+  ];
+
   @override
   Widget build(BuildContext context) {
     final store = widget.store;
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
-        // Chart page only exists when income is set.
-        final page = store.hasIncome ? _page : 0;
+        _maybeWelcome(store);
+        final tabs = _tabs(store);
+        final tab = tabs.contains(_tab) ? _tab : AppTab.home;
         return Scaffold(
           appBar: AppBar(
             toolbarHeight: 48,
@@ -98,11 +181,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
               ),
             ],
           ),
-          body: page == 0 ? HomePage(store: store) : ChartPage(store: store),
-          bottomNavigationBar: store.hasIncome
+          body: switch (tab) {
+            AppTab.home => HomePage(store: store),
+            AppTab.chart => ChartPage(store: store),
+            AppTab.budget => BudgetPage(store: store),
+          },
+          bottomNavigationBar: tabs.length > 1
               ? _BottomBar(
-                  page: page,
-                  onSelect: (p) => setState(() => _page = p),
+                  tabs: tabs,
+                  current: tab,
+                  onSelect: (t) => setState(() => _tab = t),
                 )
               : null,
         );
@@ -111,53 +199,65 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   }
 }
 
+/// Compact footer: small round buttons, no background bar.
 class _BottomBar extends StatelessWidget {
-  const _BottomBar({required this.page, required this.onSelect});
+  const _BottomBar({
+    required this.tabs,
+    required this.current,
+    required this.onSelect,
+  });
 
-  final int page;
-  final ValueChanged<int> onSelect;
+  final List<AppTab> tabs;
+  final AppTab current;
+  final ValueChanged<AppTab> onSelect;
 
   @override
   Widget build(BuildContext context) {
-    Widget roundButton(int index, IconData icon, String label) {
-      final selected = page == index;
-      return Semantics(
-        label: label,
-        button: true,
-        selected: selected,
-        child: GestureDetector(
-          onTap: () => onSelect(index),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 150),
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: selected ? context.colors.homeButton : context.colors.pill,
-            ),
-            child: Icon(
-              icon,
-              size: 44,
-              color: selected
-                  ? context.colors.onHomeButton
-                  : context.colors.textSecondary,
+    Widget roundButton(AppTab tab) {
+      final selected = tab == current;
+      return Tooltip(
+        message: tab.label,
+        child: Semantics(
+          label: tab.label,
+          button: true,
+          selected: selected,
+          child: GestureDetector(
+            onTap: () => onSelect(tab),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 150),
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: selected
+                    ? context.colors.homeButton
+                    : context.colors.pill,
+              ),
+              child: Icon(
+                tab.icon,
+                size: 26,
+                color: selected
+                    ? context.colors.onHomeButton
+                    : context.colors.textSecondary,
+              ),
             ),
           ),
         ),
       );
     }
 
-    // No background: the buttons sit directly on the page color.
     return SafeArea(
       top: false,
+      minimum: const EdgeInsets.only(bottom: 4),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.only(top: 4),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            roundButton(0, Icons.home_rounded, 'Home'),
-            const SizedBox(width: 32),
-            roundButton(1, Icons.pie_chart_rounded, 'Chart'),
+            for (final (i, t) in tabs.indexed) ...[
+              if (i > 0) const SizedBox(width: 24),
+              roundButton(t),
+            ],
           ],
         ),
       ),
