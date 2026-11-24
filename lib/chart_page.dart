@@ -28,6 +28,8 @@ class ChartPage extends StatelessWidget {
     final slices = <_Slice>[];
     var i = 0;
     for (final f in store.folders) {
+      // Budget folders only count when set to (Settings → Budget).
+      if (!store.countsInTotals(f)) continue;
       // Only money that actually comes out of income is part of the pie.
       final value = f.incomeContribution;
       if (value <= 0) continue;
@@ -36,15 +38,6 @@ class ChartPage extends StatelessWidget {
           : _palette[i % _palette.length];
       slices.add(_Slice(f.name, value, color));
       i++;
-    }
-    if (store.currentContribution > 0) {
-      slices.add(
-        _Slice(
-          'Current budget',
-          store.currentContribution,
-          context.colors.leftAmber,
-        ),
-      );
     }
     if (store.recommendedContribution > 0) {
       slices.add(

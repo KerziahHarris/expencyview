@@ -1,10 +1,12 @@
 import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'accessibility.dart';
 import 'budget_page.dart';
 import 'models.dart';
 import 'store.dart';
 import 'theme.dart';
+import 'tour.dart';
 import 'welcome.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -109,7 +111,16 @@ class _SettingsPageState extends State<SettingsPage> {
               value: store.showWhatsLeft,
               onChanged: store.hasIncome ? store.setShowWhatsLeft : null,
             ),
-            for (final t in FolderType.values)
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Show daily, weekly and yearly costs'),
+              subtitle: const Text(
+                'Under Monthly Expense, in their own amounts',
+              ),
+              value: store.showCycleCosts,
+              onChanged: store.setShowCycleCosts,
+            ),
+            for (final t in FolderType.containers)
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: Text('Show ${t.label}'),
@@ -124,12 +135,21 @@ class _SettingsPageState extends State<SettingsPage> {
               ),
             const SizedBox(height: 28),
             const _Heading('Budget'),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                Icons.map_outlined,
+                color: context.colors.expenseBlue,
+              ),
+              title: const Text('Edit Budget'),
+              subtitle: const Text('Go through the guided tour again'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => confirmEditBudget(context, store),
+            ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('Show current budget as a folder'),
-              subtitle: const Text(
-                'What you spend per category (Add budget), at the top of home',
-              ),
+              title: const Text('Show my budget on home'),
+              subtitle: const Text('Your Budget folders, at the top of home'),
               value: store.currentOnHome,
               onChanged: store.setCurrentOnHome,
             ),
@@ -197,6 +217,18 @@ class _SettingsPageState extends State<SettingsPage> {
               subtitle: Text(store.darkMode ? 'On' : 'Off — light mode'),
               value: store.darkMode,
               onChanged: store.setDarkMode,
+            ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.accessibility_new),
+              title: const Text('Accessibility'),
+              subtitle: Text('Text size: ${(store.textScale * 100).round()}%'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => AccessibilityPage(store: store),
+                ),
+              ),
             ),
             const SizedBox(height: 20),
             Divider(color: context.colors.cardBorder),
@@ -349,7 +381,10 @@ class _PrivacyNote extends StatelessWidget {
               'Your data stays with you. Nothing you enter is shared or sold. '
               'All information is saved only on this device, and it will be '
               'removed if the app is deleted or the browser cache / site data '
-              'is cleared.',
+              'is cleared. The only thing the app reports is an anonymous '
+              'visit count (whether this is a new or returning visit), so we '
+              'know how many people use it. No amounts, names or other '
+              'details are ever sent.',
               style: TextStyle(fontSize: 12, height: 1.45, color: c.muted),
             ),
           ),
@@ -413,7 +448,9 @@ class _DuplicateWarning extends StatelessWidget {
 class AppInfoPage extends StatelessWidget {
   const AppInfoPage({super.key});
 
-  static const version = 'Version $appVersion · $appReleaseNote';
+  static const version = appReleaseNote == ''
+      ? 'Version $appVersion'
+      : 'Version $appVersion · $appReleaseNote';
 
   @override
   Widget build(BuildContext context) {
@@ -498,6 +535,13 @@ class AppInfoPage extends StatelessWidget {
             version,
             textAlign: TextAlign.center,
             style: TextStyle(color: context.colors.muted, fontSize: 13),
+          ),
+          Center(
+            child: TextButton.icon(
+              onPressed: () => showWhatsNew(context),
+              icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+              label: const Text("What's New?"),
+            ),
           ),
         ],
       ),

@@ -27,6 +27,7 @@ String newItemLabel(FolderType t) => switch (t) {
   FolderType.expense => 'New expense',
   FolderType.savings => 'New savings',
   FolderType.subscription => 'New subscription',
+  FolderType.budget => 'New budget item',
 };
 
 /// The container "+ Add" sheet: a switch between adding an item straight to
@@ -228,7 +229,8 @@ class _FolderEditorState extends State<_FolderEditor> {
           decoration: const InputDecoration(labelText: 'Folder name'),
           onSubmitted: (_) => _save(),
         ),
-        if (!widget.fixedType) ...[
+        // Budget folders always stay in the Budget container.
+        if (!widget.fixedType && _type != FolderType.budget) ...[
           const SizedBox(height: 16),
           SegmentedButton<FolderType>(
             showSelectedIcon: false,
@@ -301,6 +303,7 @@ class _FileEditorState extends State<_FileEditor> {
   late final TextEditingController _name;
   late final TextEditingController _value;
   late final TextEditingController _days;
+  late final TextEditingController _saved;
   late bool _includeAsExpense;
   late bool _fromIncome;
   late bool _paused;
@@ -311,6 +314,10 @@ class _FileEditorState extends State<_FileEditor> {
   bool get _isNew => widget.file == null;
   bool get _isSavings => widget.folder.type == FolderType.savings;
   bool get _isSubscription => widget.folder.type == FolderType.subscription;
+
+  /// Expenses and subscriptions can be charged daily, weekly, yearly...
+  bool get _hasCycle =>
+      _isSubscription || widget.folder.type == FolderType.expense;
 
   @override
   void initState() {
@@ -326,6 +333,9 @@ class _FileEditorState extends State<_FileEditor> {
     _fromIncome = f?.fromIncome ?? false;
     _paused = f?.paused ?? false;
     _cycle = f?.cycle ?? BillingCycle.monthly;
+    _saved = TextEditingController(
+      text: f?.saved == null ? '' : f!.saved!.toStringAsFixed(2),
+    );
   }
 
   @override
@@ -333,7 +343,19 @@ class _FileEditorState extends State<_FileEditor> {
     _name.dispose();
     _value.dispose();
     _days.dispose();
+    _saved.dispose();
     super.dispose();
+  }
+
+  /// The amount box converted to a month, for the "How often" hint.
+  double get _cycleMonthly =>
+      (double.tryParse(_value.text.replaceAll(RegExp(r'[,\$ ]'), '')) ?? 0) *
+      _cycle.perMonth;
+
+  /// "Saved so far" (savings only); null when blank.
+  double? get _parsedSaved {
+    final v = double.tryParse(_saved.text.replaceAll(RegExp(r'[,\$ ]'), ''));
+    return _isSavings && v != null && v > 0 ? v : null;
   }
 
   /// Parsed "remove after" days; null when blank. -1 when invalid.
@@ -375,7 +397,8 @@ class _FileEditorState extends State<_FileEditor> {
           includeAsMonthlyExpense:
               _isSavings && _fromIncome && _includeAsExpense,
           paused: _paused,
-          cycle: _isSubscription ? _cycle : BillingCycle.monthly,
+          cycle: _hasCycle ? _cycle : BillingCycle.monthly,
+          saved: _parsedSaved,
         ),
       );
     } else {
@@ -387,7 +410,8 @@ class _FileEditorState extends State<_FileEditor> {
         ..includeAsMonthlyExpense =
             _isSavings && _fromIncome && _includeAsExpense
         ..paused = _paused
-        ..cycle = _isSubscription ? _cycle : BillingCycle.monthly;
+        ..cycle = _hasCycle ? _cycle : BillingCycle.monthly
+        ..saved = _parsedSaved;
       widget.store.updateFolder();
     }
     Navigator.pop(context);
@@ -432,19 +456,51 @@ class _FileEditorState extends State<_FileEditor> {
             FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
           ],
           decoration: InputDecoration(
-            labelText: _isSubscription ? 'Price' : 'Amount',
+            labelText: _isSubscription
+                ? 'Price'
+                : _isSavings
+                ? 'Amount per month'
+                : 'Amount',
             prefixText: '\$ ',
             errorText: _error,
           ),
+          // Keeps the "Counted as $X a month" hint up to date.
+          onChanged: (_) {
+            if (_cycle != BillingCycle.monthly) setState(() {});
+          },
           onSubmitted: (_) => _save(),
         ),
-        if (_isSubscription) ...[
+        if (_isSavings) ...[
+          const SizedBox(height: 12),
+          TextField(
+            controller: _saved,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Saved so far (optional)',
+              helperText: 'Used to show how much you\'ll have in a year',
+              prefixText: '\$ ',
+            ),
+          ),
+        ],
+        if (_hasCycle) ...[
           const SizedBox(height: 16),
           DropdownButtonFormField<BillingCycle>(
+            key: const ValueKey('cycle'),
             initialValue: _cycle,
-            decoration: const InputDecoration(labelText: 'Billed'),
+            decoration: InputDecoration(
+              labelText: _isSubscription ? 'Billed' : 'How often',
+              helperText: _cycle == BillingCycle.monthly
+                  ? null
+                  : 'Counted as ${money(_cycleMonthly)} a month',
+            ),
             items: [
-              for (final c in BillingCycle.values)
+              for (final c
+                  in _isSubscription
+                      ? BillingCycle.values
+                      : BillingCycle.forExpenses)
                 DropdownMenuItem(value: c, child: Text(c.label)),
             ],
             onChanged: (v) => setState(() => _cycle = v ?? _cycle),

@@ -81,6 +81,43 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <!--
+    Anonymous user count (GoatCounter: free, no cookies, open source).
+    Sends ONE word, never anything the user entered:
+      "new-user"       the first time a device opens the app (no saved data)
+      "returning-user" at most once a day after that
+    Turned off until COUNTER is set to your GoatCounter address, e.g.
+      'https://YOURCODE.goatcounter.com/count'
+    Never counts the local preview (localhost).
+  -->
+  <script>
+    (function () {
+      var COUNTER = 'https://expencyview.goatcounter.com/count';
+      if (!COUNTER) return;
+      var host = location.hostname;
+      if (host === 'localhost' || host === '127.0.0.1') return;
+      try {
+        var hasData = localStorage.getItem('flutter.expense_tracker_v1') !== null;
+        var today = new Date().toISOString().slice(0, 10);
+        var last = localStorage.getItem('ev_counted');
+        var event;
+        if (!hasData && !last) event = 'new-user';
+        else if (last !== today) event = 'returning-user';
+        else return; // already counted today
+        localStorage.setItem('ev_counted', today);
+        var url = COUNTER + '?e=true&p=' + event + '&t=' + event +
+          '&r=&s=&q=&rnd=' + Math.random().toString(36).slice(2);
+        fetch(url, {
+          mode: 'no-cors',
+          credentials: 'omit',
+          referrerPolicy: 'no-referrer',
+          keepalive: true,
+        });
+      } catch (e) {
+        // Private browsing or blocked storage: just don't count.
+      }
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

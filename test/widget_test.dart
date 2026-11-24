@@ -197,27 +197,6 @@ void main() {
     expect(store.expenseTotal, closeTo(3000, 0.01));
   });
 
-  test('Current budget only counts when its switches are on', () {
-    final store = ExpenseStore.memory()
-      ..setIncome(3000)
-      ..setShowRecommended(true)
-      ..setActualSpending('housing', 1200)
-      ..setActualSpending('groceries', 300);
-    expect(store.currentBudget.map((e) => e.$1.name), ['Housing', 'Groceries']);
-    expect(store.currentOnHome, isTrue); // on by default
-    expect(store.recommendedOnHome, isFalse); // off by default
-    expect(store.currentCounts, isTrue); // counted by default
-    expect(store.expenseTotal, 1500);
-    store.setCurrentCounts(false);
-    expect(store.expenseTotal, 0);
-    store.setCurrentCounts(true);
-    expect(store.expenseTotal, 1500);
-    store.setCurrentOnHome(false);
-    expect(store.expenseTotal, 0); // hidden folders never count
-    store.setCurrentOnHome(true);
-    expect(store.whatsLeft, 1500);
-  });
-
   test('Old subscription folders are merged into one list', () {
     final store = ExpenseStore.memory();
     final saved = {
@@ -261,10 +240,39 @@ void main() {
     expect(store.recommendedOnHome, isFalse);
   });
 
-  test('A hotfix does not bring the update pop-up back', () {
+  test('Budget folders only count when set to', () {
+    final store = ExpenseStore.memory()..setIncome(3000);
+    store.saveTourFolder(
+      key: 'housing',
+      name: 'Housing',
+      type: FolderType.budget,
+      items: [EntryFile(name: 'Rent', value: 1200, category: 'housing')],
+    );
+    expect(store.expenseTotal, 1200); // counted by default
+    store.setCurrentCounts(false);
+    expect(store.expenseTotal, 0);
+    store
+      ..setCurrentCounts(true)
+      ..setCurrentOnHome(false);
+    expect(store.expenseTotal, 0); // hidden folders never count
+  });
+
+  test('Old per-category budgets become a "My budget" folder', () {
+    final store = ExpenseStore.memory()
+      ..loadForTest({
+        'actualSpending': {'housing': 1200, 'phone-internet': 90},
+      });
+    final f = store.foldersOf(FolderType.budget).single;
+    expect(f.name, 'My budget');
+    expect(store.categorySpending('housing'), 1200);
+    expect(store.categorySpending('phone'), 90); // split category
+  });
+
+  test('Existing users get the 1.3 update notice once', () {
     final store = ExpenseStore.memory()
       ..loadForTest({'payAmount': 3000, 'seenVersion': '1.2'});
-    expect(appVersion, '1.2.1');
+    expect(store.needsUpdateNotice, isTrue);
+    store.markUpdateSeen();
     expect(store.needsUpdateNotice, isFalse);
   });
 

@@ -4,7 +4,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:expensive/main.dart';
 import 'package:expensive/models.dart';
 import 'package:expensive/store.dart';
-import 'package:expensive/theme.dart';
 
 /// A container's title, which also shows its total ("Expenses · \$0").
 Finder title(String name) => find.textContaining('$name ·', findRichText: true);
@@ -143,7 +142,7 @@ void main() {
     await tester.tap(find.text('App Info'));
     await tester.pumpAndSettle();
     expect(find.text('Thank you for trying this app.'), findsOneWidget);
-    expect(find.text('Version 1.2.1 · Hotfix'), findsOneWidget);
+    expect(find.text('Version 1.3'), findsOneWidget);
     // The privacy disclaimer lives on App Info.
     expect(
       find.textContaining('Nothing you enter is shared or sold'),
@@ -190,6 +189,8 @@ void main() {
       find.byType(ListView).last,
       const Offset(0, -200),
     );
+    await tester.ensureVisible(find.text('Dark mode'));
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Dark mode'));
     await tester.pumpAndSettle();
     expect(store.darkMode, isTrue);
@@ -270,7 +271,7 @@ void main() {
     await tester.tap(find.byTooltip('Budget'));
     await tester.pumpAndSettle();
     expect(find.text('Recommended budget'), findsOneWidget);
-    expect(find.text('Toiletries & personal care'), findsOneWidget);
+    expect(find.text('Toiletries'), findsOneWidget);
     expect(find.text('Needs'), findsOneWidget);
 
     // Household size is typed in (large numbers allowed).
@@ -308,67 +309,6 @@ void main() {
     expect(store.expenseTotal, closeTo(4000, 0.01));
   });
 
-  testWidgets('Compare tab: enter spending and see over / under', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1179, 2556);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    final store = ExpenseStore.memory()
-      ..setPayAmount(4000)
-      ..setShowRecommended(true);
-    await tester.pumpWidget(ExpenseApp(store: store));
-    await tester.tap(find.byTooltip('Budget'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Compare'));
-    await tester.pumpAndSettle();
-
-    final housing = store.recommendedLines.firstWhere(
-      (l) => l.category.name == 'Housing',
-    );
-    final over = housing.amount.roundToDouble() + 100;
-    await tester.enterText(
-      find.byKey(ValueKey('spend-${housing.category.id}')),
-      over.toStringAsFixed(0),
-    );
-    await tester.pumpAndSettle();
-    // Nothing is saved or redrawn until Apply changes is pressed.
-    expect(store.actualSpending, isEmpty);
-    expect(find.text('Over by \$100'), findsNothing);
-    await tester.pumpAndSettle(); // button animates in
-    await tester.tap(find.text('Apply changes'));
-    await tester.pumpAndSettle();
-    expect(store.actualSpending[housing.category.id], over);
-    expect(find.text('Over by \$100'), findsOneWidget);
-    // Each container shows its own guide total.
-    final needsGuide = store.recommendedLines
-        .where((l) => l.category.group.name == 'needs')
-        .fold<double>(0, (s, l) => s + l.amount)
-        .roundToDouble();
-    expect(find.text('Guide ${money(needsGuide)}'), findsOneWidget);
-
-    // Spending less than the guide reads as "Saving".
-    await tester.enterText(
-      find.byKey(ValueKey('spend-${housing.category.id}')),
-      (housing.amount.roundToDouble() - 50).toStringAsFixed(0),
-    );
-    await tester.pumpAndSettle(); // button animates in
-    await tester.tap(find.text('Apply changes'));
-    await tester.pumpAndSettle();
-    expect(find.text('Saving \$50'), findsWidgets);
-    expect(find.text('1 of 15 categories filled in'), findsOneWidget);
-
-    // Clearing the box removes it again.
-    await tester.enterText(
-      find.byKey(ValueKey('spend-${housing.category.id}')),
-      '',
-    );
-    await tester.pumpAndSettle(); // button animates in
-    await tester.tap(find.text('Apply changes'));
-    await tester.pumpAndSettle();
-    expect(store.actualSpending, isEmpty);
-  });
-
   testWidgets('Counted recommended folder: switch a line off on home', (
     tester,
   ) async {
@@ -386,76 +326,12 @@ void main() {
 
     store.setRecommendedCounts(true);
     await tester.pumpAndSettle();
-    expect(find.byType(Switch), findsNWidgets(15));
+    expect(find.byType(Switch), findsNWidgets(19));
     await tester.tap(find.byType(Switch).first); // Housing
     await tester.pumpAndSettle();
     final housing = store.recommendedLines.first;
     expect(store.recommendedOff, contains(housing.category.id));
     expect(store.expenseTotal, closeTo(4000 - housing.amount, 0.01));
-  });
-
-  testWidgets('Add budget pop-up feeds the current budget and Compare', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1179, 2556);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    final store = ExpenseStore.memory()
-      ..setPayAmount(4000)
-      ..setShowRecommended(true)
-      ..setCurrentOnHome(true)
-      ..setRecommendedOnHome(true);
-    await tester.pumpWidget(ExpenseApp(store: store));
-
-    // Budget container sits above Expenses, current above recommended.
-    final budgetY = tester.getTopLeft(find.text('Budget').first).dy;
-    final expensesY = tester.getTopLeft(title('Expenses')).dy;
-    expect(budgetY, lessThan(expensesY));
-    expect(
-      tester.getTopLeft(find.textContaining('Current budget ·')).dy,
-      lessThan(
-        tester.getTopLeft(find.textContaining('Recommended budget ·')).dy,
-      ),
-    );
-
-    // The Budget container has no add button; it's on the folder.
-    expect(find.text('Add budget'), findsOneWidget);
-    await tester.tap(find.text('Add budget'));
-    await tester.pumpAndSettle();
-    expect(find.text('Your current budget'), findsOneWidget);
-    // 0 counts as no input.
-    await tester.enterText(find.byKey(const ValueKey('dialog-utilities')), '0');
-    await tester.enterText(
-      find.byKey(const ValueKey('dialog-housing')),
-      '1500',
-    );
-    await tester.enterText(
-      find.byKey(const ValueKey('dialog-groceries')),
-      '400',
-    );
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-
-    // Only filled-in categories are listed.
-    expect(store.actualSpending, {'housing': 1500, 'groceries': 400});
-    expect(find.textContaining('Current budget · \$1,900'), findsOneWidget);
-    expect(find.text('Utilities'), findsNothing);
-    expect(store.expenseTotal, 1900); // counted by default
-
-    // Same numbers show up (and stay editable) on Compare.
-    await tester.tap(find.byTooltip('Budget'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Compare'));
-    await tester.pumpAndSettle();
-    final box = find.byKey(const ValueKey('spend-housing'));
-    expect(tester.widget<TextField>(box).controller!.text, '1500');
-    await tester.enterText(box, '1450');
-    await tester.pumpAndSettle();
-
-    // Leaving the page without pressing Apply still keeps the edit.
-    await tester.tap(find.byTooltip('Home'));
-    await tester.pumpAndSettle();
-    expect(store.actualSpending['housing'], 1450);
   });
 
   testWidgets('Add: a new expense goes straight into the container', (
@@ -497,46 +373,6 @@ void main() {
     double x(String t) => tester.getCenter(find.byTooltip(t)).dx;
     expect(x('Budget'), lessThan(x('Home')));
     expect(x('Home'), lessThan(x('Chart')));
-  });
-
-  testWidgets('First-time welcome leads to the budget pop-up', (tester) async {
-    tester.view.physicalSize = const Size(1179, 2556);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    final store = ExpenseStore.memory()..seenWelcome = false;
-    await tester.pumpWidget(ExpenseApp(store: store));
-    await tester.pumpAndSettle();
-    expect(find.text('Welcome to ExpencyView'), findsOneWidget);
-    expect(find.text('A place to view your expenses.'), findsOneWidget);
-
-    await tester.tap(find.text('Start by adding your budget'));
-    await tester.pumpAndSettle();
-    expect(store.seenWelcome, isTrue);
-    expect(find.text('Your current budget'), findsOneWidget);
-    await tester.enterText(find.byKey(const ValueKey('dialog-housing')), '900');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-
-    // Next: a simple income pop-up (options + amount, no breakdown).
-    expect(find.text('Would you like to add your income?'), findsOneWidget);
-    expect(find.text('Per week'), findsNothing);
-    await tester.tap(find.text('Weekly'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('income-amount')), '700');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    expect(store.payFrequency, PayFrequency.weekly);
-    expect(store.payAmount, 700);
-
-    // Then: offer the recommended budget (income is set now).
-    expect(find.text('Turn on the recommended budget?'), findsOneWidget);
-    await tester.tap(find.text('Turn it on'));
-    await tester.pumpAndSettle();
-    expect(store.showRecommended, isTrue);
-    expect(find.byTooltip('Budget'), findsOneWidget);
-
-    // Shows on home right away, counted by default.
-    expect(find.textContaining('Current budget · \$900'), findsOneWidget);
   });
 
   testWidgets('Returning users do not see the welcome', (tester) async {
@@ -602,10 +438,13 @@ void main() {
     expect(find.text('ExpencyView has been updated'), findsOneWidget);
     expect(find.text('Welcome to ExpencyView'), findsNothing);
 
-    await tester.tap(find.text('Add my budget'));
+    // First option: the new guided tour.
+    await tester.tap(find.text('Try the new guided tour'));
     await tester.pumpAndSettle();
-    expect(find.text('Your current budget'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
+    expect(find.text('Budget tour'), findsOneWidget);
+    await tester.tap(find.byTooltip('Leave the tour'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Leave'));
     await tester.pumpAndSettle();
     expect(store.needsUpdateNotice, isFalse);
     expect(store.payAmount, 3000); // data untouched
@@ -646,30 +485,11 @@ void main() {
     final store = ExpenseStore.memory()..seenWelcome = false;
     await tester.pumpWidget(ExpenseApp(store: store));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Maybe later'));
+    expect(find.text('Welcome to ExpencyView'), findsOneWidget);
+    await tester.tap(find.text('Skip for now'));
     await tester.pumpAndSettle();
     expect(find.text('ExpencyView has been updated'), findsNothing);
     expect(store.needsUpdateNotice, isFalse);
-  });
-
-  testWidgets('Welcome: no recommended question if income was skipped', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1179, 2556);
-    tester.view.devicePixelRatio = 3;
-    addTearDown(tester.view.reset);
-    final store = ExpenseStore.memory()..seenWelcome = false;
-    await tester.pumpWidget(ExpenseApp(store: store));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Start by adding your budget'));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('dialog-housing')), '900');
-    await tester.tap(find.text('Save'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Not now')); // skip income
-    await tester.pumpAndSettle();
-    expect(find.text('Turn on the recommended budget?'), findsNothing);
-    expect(store.showRecommended, isFalse);
   });
 
   testWidgets('Expenses reads "Other Expenses" when the budget is on home', (

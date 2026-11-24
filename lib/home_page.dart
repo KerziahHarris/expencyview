@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import 'budget.dart';
-import 'budget_page.dart';
+import 'tour.dart';
 import 'editors.dart';
 import 'models.dart';
 import 'store.dart';
@@ -37,6 +37,14 @@ class HomePage extends StatelessWidget {
           amount: store.expenseTotal,
           color: context.colors.expenseBlue,
           large: true,
+          // Optional (Settings): daily / weekly / yearly costs in their own
+          // amounts, faded under the monthly total.
+          detail: store.showCycleCosts && store.cycleCosts.isNotEmpty
+              ? [
+                  for (final e in store.cycleCosts.entries)
+                    '${money(e.value)} / ${e.key.short}',
+                ].join('  ·  ')
+              : null,
         ),
         if (store.hasIncome && store.showWhatsLeft)
           SummaryCard(
@@ -74,8 +82,22 @@ class HomePage extends StatelessWidget {
           _Section(
             title: 'Budget',
             accent: context.colors.leftAmber,
+            total: store.currentOnHome
+                ? store.containerTotal(FolderType.budget)
+                : null,
+            onAdd: () => confirmEditBudget(context, store),
+            addLabel: 'Edit Budget',
+            addIcon: Icons.edit_outlined,
             children: [
-              if (store.currentOnHome) _CurrentBudgetFolder(store: store),
+              if (store.currentOnHome) ...[
+                for (final f in store.foldersOf(FolderType.budget))
+                  FolderTile(store: store, folder: f),
+                if (store.foldersOf(FolderType.budget).isEmpty)
+                  const _EmptyHint(
+                    'Tap Edit Budget to build your budget with the guided '
+                    'tour',
+                  ),
+              ],
               if (store.recommendedOnHome && store.hasIncome)
                 _RecommendedFolder(store: store),
             ],
@@ -83,7 +105,7 @@ class HomePage extends StatelessWidget {
         ],
 
         // ---- Containers (each one switched on/off in Settings) ----
-        for (final type in FolderType.values)
+        for (final type in FolderType.containers)
           if (store.showsSection(type)) ...[
             const SizedBox(height: 20),
             if (type == FolderType.subscription)
@@ -96,6 +118,9 @@ class HomePage extends StatelessWidget {
                     : type.label,
                 accent: sectionAccent(context, type),
                 total: store.containerTotal(type),
+                subtitle: type == FolderType.savings && store.savingsInAYear > 0
+                    ? 'In a year: ${money(store.savingsInAYear.roundToDouble())}'
+                    : null,
                 onAdd: () => showAddToContainer(context, store, type),
                 children: [
                   // Items added straight to the container, then folders.
@@ -122,7 +147,7 @@ class HomePage extends StatelessWidget {
                 ],
               ),
           ],
-        if (!FolderType.values.any(store.showsSection))
+        if (!FolderType.containers.any(store.showsSection))
           const Padding(
             padding: EdgeInsets.only(top: 24),
             child: _EmptyHint(
@@ -139,6 +164,7 @@ Color sectionAccent(BuildContext context, FolderType type) => switch (type) {
   FolderType.expense => context.colors.expenseBlue,
   FolderType.savings => context.colors.savingsGreen,
   FolderType.subscription => context.colors.subscriptionPurple,
+  FolderType.budget => context.colors.leftAmber,
 };
 
 /// Compact one-line "Income  $750 / wk  $3,250 / mo" bar shown above the
@@ -233,6 +259,7 @@ class SummaryCard extends StatelessWidget {
     required this.color,
     this.large = false,
     this.subtitle,
+    this.detail,
   });
 
   final String title;
@@ -242,6 +269,9 @@ class SummaryCard extends StatelessWidget {
 
   /// Small line under the amount (e.g. "$350 per week").
   final String? subtitle;
+
+  /// Extra faded line under the amount (e.g. "$5 / day · $1,200 / yr").
+  final String? detail;
 
   @override
   Widget build(BuildContext context) {
@@ -288,6 +318,15 @@ class SummaryCard extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 15,
                   color: context.colors.textSecondary,
+                ),
+              ),
+            if (detail != null)
+              Opacity(
+                opacity: 0.6,
+                child: Text(
+                  detail!,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 15, color: color),
                 ),
               ),
           ],
@@ -550,8 +589,9 @@ class _FilePill extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = [
+      if (file.saved != null) 'Saved ${money(file.saved!)}',
       if (file.fromIncome) 'From income',
-      if (showCycle && file.cycle != BillingCycle.monthly)
+      if (file.cycle != BillingCycle.monthly)
         '≈ ${money(file.value * file.cycle.perMonth)} / mo',
       ?_expiryText(),
     ].join(' · ');
@@ -579,7 +619,7 @@ class _FilePill extends StatelessWidget {
                               child: Text(
                                 file.name,
                                 style: TextStyle(
-                                  fontSize: 16,
+                                  fontSize: 17,
                                   color: context.colors.text,
                                 ),
                                 overflow: TextOverflow.ellipsis,
@@ -609,13 +649,13 @@ class _FilePill extends StatelessWidget {
                   Text(
                     money(file.value),
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 17,
                       color: context.colors.text,
                       fontWeight: FontWeight.w600,
                       fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
-                  if (showCycle)
+                  if (showCycle || file.cycle != BillingCycle.monthly)
                     Text(
                       ' / ${file.cycle.short}',
                       style: TextStyle(
@@ -628,139 +668,6 @@ class _FilePill extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// The user's own budget (amounts from Add budget / Compare) as a folder.
-/// Only categories with an amount are listed; tap a row to edit them all.
-class _CurrentBudgetFolder extends StatefulWidget {
-  const _CurrentBudgetFolder({required this.store});
-
-  final ExpenseStore store;
-
-  @override
-  State<_CurrentBudgetFolder> createState() => _CurrentBudgetFolderState();
-}
-
-class _CurrentBudgetFolderState extends State<_CurrentBudgetFolder> {
-  bool _collapsed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final store = widget.store;
-    final items = store.currentBudget;
-    final total = items.fold<double>(0, (s, e) => s + e.$2);
-    final counted = store.currentIsCounted;
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => setState(() => _collapsed = !_collapsed),
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 9, 4, 9),
-              child: Row(
-                children: [
-                  AnimatedRotation(
-                    turns: _collapsed ? -0.25 : 0,
-                    duration: const Duration(milliseconds: 150),
-                    child: Icon(
-                      Icons.expand_more,
-                      color: context.colors.textSecondary,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  // Title + badge take the free space; the button stays
-                  // flush right.
-                  Expanded(
-                    child: Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            'Current budget · ${money(total)}',
-                            style: TextStyle(
-                              fontSize: 17,
-                              color: context.colors.text,
-                              fontWeight: FontWeight.w600,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        _Badge(
-                          counted ? 'Counted' : 'Not counted',
-                          color: counted
-                              ? context.colors.expenseBlue
-                              : context.colors.muted,
-                        ),
-                      ],
-                    ),
-                  ),
-                  TextButton.icon(
-                    onPressed: () => showBudgetDialog(context, store),
-                    icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Add budget'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: context.colors.muted,
-                      visualDensity: VisualDensity.compact,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (!_collapsed) ...[
-            if (items.isEmpty)
-              const _EmptyHint('Tap Add budget to enter what you spend'),
-            for (final (cat, amount) in items)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6, left: 4, right: 4),
-                child: Material(
-                  color: context.colors.row,
-                  borderRadius: BorderRadius.circular(12),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () => showBudgetDialog(context, store),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        vertical: 10,
-                        horizontal: 14,
-                      ),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              cat.name,
-                              style: TextStyle(
-                                fontSize: 15,
-                                color: context.colors.text,
-                              ),
-                            ),
-                          ),
-                          Text(
-                            money(amount),
-                            style: TextStyle(
-                              fontSize: 15,
-                              color: context.colors.text,
-                              fontWeight: FontWeight.w600,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ],
       ),
     );
   }
@@ -1000,6 +907,9 @@ class _Section extends StatelessWidget {
     required this.children,
     this.onAdd,
     this.total,
+    this.addLabel = 'Add',
+    this.addIcon = Icons.add,
+    this.subtitle,
   });
 
   final String title;
@@ -1010,6 +920,11 @@ class _Section extends StatelessWidget {
 
   /// Header button; none when null.
   final VoidCallback? onAdd;
+  final String addLabel;
+  final IconData addIcon;
+
+  /// Small line under the title (e.g. "In a year: $5,400").
+  final String? subtitle;
   final List<Widget> children;
 
   @override
@@ -1061,14 +976,26 @@ class _Section extends StatelessWidget {
               if (onAdd != null)
                 TextButton.icon(
                   onPressed: onAdd,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add'),
+                  icon: Icon(addIcon, size: 18),
+                  label: Text(addLabel),
                   style: TextButton.styleFrom(
                     foregroundColor: context.colors.muted,
                   ),
                 ),
             ],
           ),
+          if (subtitle != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 14, top: 2),
+              child: Text(
+                subtitle!,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                  color: accent,
+                ),
+              ),
+            ),
           Divider(color: context.colors.cardBorder, height: 16),
           ...children,
         ],

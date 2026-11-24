@@ -49,21 +49,17 @@ const budgetCategories = [
   BudgetCategory(
     BudgetGroup.needs,
     'Housing',
-    'Rent or mortgage, renters / home insurance',
+    'Rent or mortgage, property tax, home or renters insurance',
     27,
   ),
   BudgetCategory(
     BudgetGroup.needs,
     'Utilities',
-    'Electricity, water, gas, trash',
+    'Electricity, natural gas, water, trash',
     6,
   ),
-  BudgetCategory(
-    BudgetGroup.needs,
-    'Phone & internet',
-    'Cell phone plan, home internet',
-    3,
-  ),
+  BudgetCategory(BudgetGroup.needs, 'Phone', 'Cell phone plan', 1.5),
+  BudgetCategory(BudgetGroup.needs, 'Internet', 'Home internet', 1.5),
   BudgetCategory(
     BudgetGroup.needs,
     'Groceries',
@@ -86,9 +82,16 @@ const budgetCategories = [
   ),
   BudgetCategory(
     BudgetGroup.needs,
-    'Toiletries & personal care',
-    'Toothpaste, soap, shampoo, deodorant, haircuts',
-    1.5,
+    'Toiletries',
+    'Toothpaste, soap, shampoo, deodorant',
+    0.8,
+    perPerson: true,
+  ),
+  BudgetCategory(
+    BudgetGroup.needs,
+    'Personal care',
+    'Haircuts, skin care, grooming',
+    0.7,
     perPerson: true,
   ),
   BudgetCategory(
@@ -126,20 +129,27 @@ const budgetCategories = [
   BudgetCategory(
     BudgetGroup.wants,
     'Miscellaneous',
-    'Small unexpected costs',
+    'Small unexpected costs, travel',
     3.5,
   ),
   BudgetCategory(
     BudgetGroup.savings,
-    'Emergency fund & savings',
+    'Emergency fund',
     'Aim for 3–6 months of expenses',
-    12,
+    7,
   ),
   BudgetCategory(
     BudgetGroup.savings,
-    'Retirement & extra debt payments',
-    '401(k) / IRA, paying down cards or loans',
-    7,
+    'Savings',
+    'Goals like a car, a trip or a home',
+    5,
+  ),
+  BudgetCategory(BudgetGroup.savings, 'Retirement', '401(k), IRA', 4),
+  BudgetCategory(
+    BudgetGroup.savings,
+    'Extra debt payments',
+    'Credit cards and loans, above the minimum',
+    3,
   ),
 ];
 

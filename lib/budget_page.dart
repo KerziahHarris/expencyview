@@ -2,7 +2,8 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'budget.dart';
-import 'income_dialog.dart';
+import 'models.dart';
+import 'tour.dart';
 import 'store.dart';
 import 'theme.dart';
 
@@ -10,7 +11,8 @@ enum _BudgetView { guide, compare }
 
 /// Budget tab: a suggested monthly breakdown of the user's income, grouped
 /// into needs / wants / savings, for their household size. The Compare view
-/// lets the user enter what they really spend and see it against the guide.
+/// totals the user's own items per category (from their Budget folders,
+/// savings plan and tour subscriptions) and sets them against the guide.
 class BudgetPage extends StatefulWidget {
   const BudgetPage({super.key, required this.store});
 
@@ -23,57 +25,161 @@ class BudgetPage extends StatefulWidget {
 class _BudgetPageState extends State<BudgetPage> {
   _BudgetView _view = _BudgetView.guide;
 
-  // Edits typed on this page are held here (not saved) until "Apply
+  // The household size typed here is held (not saved) until "Apply
   // changes", so typing doesn't redraw and save the whole app each keystroke.
-  final Map<String, double?> _pendingSpending = {};
   int? _pendingHousehold;
   final _dirty = ValueNotifier<bool>(false);
-
-  void _editSpending(String id, double? amount) {
-    _pendingSpending[id] = amount;
-    _dirty.value = true;
-  }
 
   void _editHousehold(int n) {
     _pendingHousehold = n;
     _dirty.value = true;
   }
 
-  bool _isPending(String id) => _pendingSpending.containsKey(id);
+  // Compare → Edit: one box per item (and one per empty category). Nothing
+  // changes until Save.
+  bool _editing = false;
+  final Map<EntryFile, TextEditingController> _itemBoxes = {};
+  final Map<String, TextEditingController> _newBoxes = {};
 
-  /// Saves every pending edit in one go and redraws once.
-  void _apply() {
-    _commit(widget.store, Map.of(_pendingSpending), _pendingHousehold);
-    _pendingSpending.clear();
-    _pendingHousehold = null;
-    _dirty.value = false;
+  static String _fmt(double v) =>
+      v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(2);
+
+  static double? _parse(String t) =>
+      double.tryParse(t.replaceAll(RegExp(r'[,\$ ]'), '').trim());
+
+  void _startEdit() {
+    _clearBoxes();
+    for (final l in widget.store.recommendedLines) {
+      final items = widget.store.categoryItems(l.category.id);
+      if (items.isEmpty) {
+        _newBoxes[l.category.id] = TextEditingController();
+      }
+      for (final (_, file) in items) {
+        _itemBoxes[file] = TextEditingController(text: _fmt(file.monthlyValue));
+      }
+    }
+    setState(() => _editing = true);
+    _dirty.value = true;
+  }
+
+  void _cancelEdit() {
+    _clearBoxes();
+    setState(() => _editing = false);
+    _dirty.value = _pendingHousehold != null;
     FocusManager.instance.primaryFocus?.unfocus();
   }
 
-  static void _commit(
-    ExpenseStore store,
-    Map<String, double?> spending,
-    int? household,
-  ) {
-    if (spending.isNotEmpty) {
-      final merged = Map.of(store.actualSpending);
-      spending.forEach(
-        (id, v) => v == null ? merged.remove(id) : merged[id] = v,
-      );
-      store.setAllActualSpending(merged);
+  void _clearBoxes() {
+    for (final c in [..._itemBoxes.values, ..._newBoxes.values]) {
+      c.dispose();
     }
-    if (household != null) store.setHouseholdSize(household);
+    _itemBoxes.clear();
+    _newBoxes.clear();
+  }
+
+  /// The box(es) shown for one category while editing.
+  Widget _editor(BudgetLine line) {
+    final c = context.colors;
+    Widget box(
+      String label,
+      String? note,
+      TextEditingController ctrl,
+      Key key,
+    ) => Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 14, color: c.text)),
+                if (note != null)
+                  Text(note, style: TextStyle(fontSize: 11, color: c.muted)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 120,
+            child: TextField(
+              key: key,
+              controller: ctrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              inputFormatters: [
+                FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
+              ],
+              textAlign: TextAlign.right,
+              decoration: const InputDecoration(
+                isDense: true,
+                prefixText: '\$ ',
+                hintText: '0',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  vertical: 8,
+                  horizontal: 10,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+    final items = widget.store.categoryItems(line.category.id);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final (folder, file) in items)
+          if (_itemBoxes[file] case final ctrl?)
+            box(
+              file.name,
+              '${folder.loose ? folder.type.label : folder.name} · per month',
+              ctrl,
+              ValueKey('edit-${file.id}'),
+            ),
+        if (_newBoxes[line.category.id] case final ctrl?)
+          box(
+            'Add an amount',
+            'Saved to a "My budget" folder',
+            ctrl,
+            ValueKey('edit-new-${line.category.id}'),
+          ),
+      ],
+    );
+  }
+
+  /// Saves pending edits (household and/or Compare amounts) in one go.
+  void _apply() {
+    final store = widget.store;
+    if (_pendingHousehold case final n?) store.setHouseholdSize(n);
+    _pendingHousehold = null;
+    if (_editing) {
+      store.applyCompareEdits(
+        items: {
+          for (final e in _itemBoxes.entries) e.key: _parse(e.value.text),
+        },
+        added: {
+          for (final e in _newBoxes.entries)
+            if (_parse(e.value.text) case final v? when v > 0) e.key: v,
+        },
+      );
+      _clearBoxes();
+      setState(() => _editing = false);
+    }
+    _dirty.value = false;
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
   void dispose() {
     // Leaving the page without pressing Apply still keeps what was typed.
-    if (_dirty.value) {
+    if (_pendingHousehold case final n?) {
       final store = widget.store;
-      final spending = Map.of(_pendingSpending);
-      final household = _pendingHousehold;
-      Future.microtask(() => _commit(store, spending, household));
+      Future.microtask(() => store.setHouseholdSize(n));
     }
+    _clearBoxes();
     _dirty.dispose();
     super.dispose();
   }
@@ -102,9 +208,7 @@ class _BudgetPageState extends State<BudgetPage> {
         ),
         const SizedBox(height: 4),
         Text(
-          compare
-              ? 'Enter what you spend each month to compare'
-              : 'Where $basis could go',
+          compare ? 'Your budget next to the guide' : 'Where $basis could go',
           textAlign: TextAlign.center,
           style: TextStyle(color: context.colors.muted, fontSize: 16),
         ),
@@ -131,13 +235,38 @@ class _BudgetPageState extends State<BudgetPage> {
         const SizedBox(height: 16),
         if (compare) ...[
           _CompareSummary(store: store),
+          // Edit my amounts ↔ Cancel / Save
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                if (_editing) ...[
+                  TextButton(
+                    onPressed: _cancelEdit,
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _apply,
+                    icon: const Icon(Icons.check, size: 18),
+                    label: const Text('Save'),
+                  ),
+                ] else
+                  OutlinedButton.icon(
+                    onPressed: _startEdit,
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Edit'),
+                  ),
+              ],
+            ),
+          ),
           for (final group in BudgetGroup.values)
             _CompareGroupCard(
               store: store,
               group: group,
               lines: linesOf(group),
-              onEdit: _editSpending,
-              isPending: _isPending,
+              editor: _editing ? _editor : null,
             ),
         ] else
           for (final group in BudgetGroup.values)
@@ -191,7 +320,7 @@ class _BudgetPageState extends State<BudgetPage> {
               child: FilledButton.icon(
                 onPressed: dirty ? _apply : null,
                 icon: const Icon(Icons.check, size: 18),
-                label: const Text('Apply changes'),
+                label: Text(_editing ? 'Save' : 'Apply changes'),
                 style: FilledButton.styleFrom(
                   elevation: 6,
                   shadowColor: Colors.black54,
@@ -282,11 +411,16 @@ class _HouseholdStepperState extends State<HouseholdStepper> {
         children: [
           Icon(Icons.people_outline, size: 20, color: context.colors.muted),
           const SizedBox(width: 8),
-          Text(
-            'Household',
-            style: TextStyle(fontSize: 15, color: context.colors.muted),
+          // Takes the free space (and shortens with "…" if text is huge),
+          // so the box and "person/people" always fit on one line.
+          Expanded(
+            child: Text(
+              'Household',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 15, color: context.colors.muted),
+            ),
           ),
-          const Spacer(),
           SizedBox(
             width: 72,
             child: TextField(
@@ -314,12 +448,11 @@ class _HouseholdStepperState extends State<HouseholdStepper> {
             ),
           ),
           const SizedBox(width: 8),
-          SizedBox(
-            width: 52,
-            child: Text(
-              n == 1 ? 'person' : 'people',
-              style: TextStyle(fontSize: 15, color: context.colors.muted),
-            ),
+          // No fixed width, so "person"/"people" never wraps.
+          Text(
+            n == 1 ? 'Person' : 'People',
+            softWrap: false,
+            style: TextStyle(fontSize: 15, color: context.colors.muted),
           ),
         ],
       ),
@@ -520,18 +653,20 @@ class _CompareSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final lines = store.recommendedLines;
+    final spent = {
+      for (final l in lines)
+        l.category.id: ?store.categorySpending(l.category.id),
+    };
     final spending = [
       for (final l in lines)
         if (l.category.group != BudgetGroup.savings &&
-            store.actualSpending.containsKey(l.category.id))
+            spent.containsKey(l.category.id))
           l,
     ];
-    final filled = lines
-        .where((l) => store.actualSpending.containsKey(l.category.id))
-        .length;
+    final filled = spent.length;
     final actual = spending.fold<double>(
       0,
-      (s, l) => s + store.actualSpending[l.category.id]!,
+      (s, l) => s + spent[l.category.id]!,
     );
     final guide = spending.fold<double>(0, (s, l) => s + l.amount);
     final diff = actual - guide;
@@ -545,10 +680,25 @@ class _CompareSummary extends StatelessWidget {
         borderRadius: BorderRadius.circular(20),
       ),
       child: filled == 0
-          ? Text(
-              'Type what you spend in a month next to each category below. '
-              'Leave any you don\'t know blank.',
-              style: TextStyle(fontSize: 14, height: 1.4, color: c.muted),
+          ? Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Nothing to compare yet. Build your budget with the guided '
+                  'tour and your amounts will show up here, category by '
+                  'category.',
+                  style: TextStyle(fontSize: 14, height: 1.4, color: c.muted),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: FilledButton.icon(
+                    onPressed: () => confirmEditBudget(context, store),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Edit Budget'),
+                  ),
+                ),
+              ],
             )
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -628,22 +778,22 @@ class _CompareGroupCard extends StatelessWidget {
     required this.store,
     required this.group,
     required this.lines,
-    required this.onEdit,
-    required this.isPending,
+    this.editor,
   });
 
   final ExpenseStore store;
   final BudgetGroup group;
   final List<BudgetLine> lines;
-  final void Function(String id, double? amount) onEdit;
-  final bool Function(String id) isPending;
+
+  /// Edit mode: builds the boxes for one category.
+  final Widget Function(BudgetLine)? editor;
 
   @override
   Widget build(BuildContext context) {
     final accent = _groupAccent(context, group);
     final guideTotal = lines.fold<double>(0, (s, l) => s + l.amount);
     final filled = [
-      for (final l in lines) ?store.actualSpending[l.category.id],
+      for (final l in lines) ?store.categorySpending(l.category.id),
     ];
     final yourTotal = filled.fold<double>(0, (s, v) => s + v);
     return Container(
@@ -705,10 +855,9 @@ class _CompareGroupCard extends StatelessWidget {
           for (final l in lines)
             _CompareRow(
               key: ValueKey(l.category.id),
-              store: store,
+              actual: store.categorySpending(l.category.id),
               line: l,
-              onEdit: onEdit,
-              isPending: isPending,
+              editor: editor?.call(l),
             ),
         ],
       ),
@@ -716,72 +865,61 @@ class _CompareGroupCard extends StatelessWidget {
   }
 }
 
-/// One category: name, a "$ ___" box for real spending, and how it compares.
-class _CompareRow extends StatefulWidget {
+/// One category: what you spend (from your items), the guide, and how they
+/// compare.
+class _CompareRow extends StatelessWidget {
   const _CompareRow({
     super.key,
-    required this.store,
     required this.line,
-    required this.onEdit,
-    required this.isPending,
+    required this.actual,
+    this.editor,
   });
 
-  final ExpenseStore store;
+  /// Edit mode: the boxes, shown instead of the verdict.
+  final Widget? editor;
+
   final BudgetLine line;
-  final void Function(String id, double? amount) onEdit;
-  final bool Function(String id) isPending;
 
-  @override
-  State<_CompareRow> createState() => _CompareRowState();
-}
-
-class _CompareRowState extends State<_CompareRow> {
-  late final TextEditingController _controller;
-
-  String get _id => widget.line.category.id;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(
-      text: formatAmountField(widget.store.actualSpending[_id]),
-    );
-  }
-
-  @override
-  void didUpdateWidget(_CompareRow old) {
-    super.didUpdateWidget(old);
-    // Sync when the amount was changed in the "Add budget" pop-up, but never
-    // overwrite something typed here that hasn't been applied yet.
-    if (widget.isPending(_id)) return;
-    final saved = widget.store.actualSpending[_id];
-    final typed = double.tryParse(_controller.text.replaceAll(',', ''));
-    // 0 and blank both mean "no input", so don't fight the user mid-typing.
-    final shown = typed == null || typed <= 0 ? null : typed;
-    if (saved != shown) _controller.text = formatAmountField(saved);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  void _onChanged(String text) {
-    final t = text.replaceAll(',', '').trim();
-    final v = double.tryParse(t);
-    // Blank or 0 means "no input". Held until "Apply changes".
-    widget.onEdit(_id, v == null || v <= 0 ? null : v);
-  }
+  /// Your monthly total for this category; null when none of your items
+  /// belong to it.
+  final double? actual;
 
   @override
   Widget build(BuildContext context) {
-    final line = widget.line;
-    final actual = widget.store.actualSpending[_id];
     final guide = line.amount.roundToDouble();
+    if (editor != null) {
+      final c = context.colors;
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    line.category.name,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                      color: c.text,
+                    ),
+                  ),
+                ),
+                Text(
+                  'Guide ${money(guide)}',
+                  style: TextStyle(fontSize: 12, color: c.muted),
+                ),
+              ],
+            ),
+            editor!,
+          ],
+        ),
+      );
+    }
     final verdict = actual == null
         ? null
-        : _Verdict.of(context, line.category.group, guide, actual);
+        : _Verdict.of(context, line.category.group, guide, actual!);
     final c = context.colors;
 
     return Padding(
@@ -798,34 +936,14 @@ class _CompareRowState extends State<_CompareRow> {
                 ),
               ),
               const SizedBox(width: 8),
-              SizedBox(
-                width: 110,
-                child: TextField(
-                  key: ValueKey('spend-$_id'),
-                  controller: _controller,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]')),
-                  ],
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
-                    color: c.text,
-                  ),
-                  decoration: const InputDecoration(
-                    isDense: true,
-                    prefixText: '\$ ',
-                    hintText: '0',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(
-                      vertical: 8,
-                      horizontal: 10,
-                    ),
-                  ),
-                  onChanged: _onChanged,
+              Text(
+                actual == null ? '—' : money(actual!.roundToDouble()),
+                key: ValueKey('spend-${line.category.id}'),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                  color: actual == null ? c.muted : c.text,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],
@@ -837,15 +955,18 @@ class _CompareRowState extends State<_CompareRow> {
                 'Guide ${money(guide)}',
                 style: TextStyle(fontSize: 12, color: c.muted),
               ),
-              const Spacer(),
-              Text(
-                verdict?.text ?? 'Not filled in',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: verdict == null
-                      ? FontWeight.normal
-                      : FontWeight.w600,
-                  color: verdict?.color ?? c.muted,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  verdict?.text ?? 'Not in your budget',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: verdict == null
+                        ? FontWeight.normal
+                        : FontWeight.w600,
+                    color: verdict?.color ?? c.muted,
+                  ),
                 ),
               ),
             ],
@@ -863,178 +984,6 @@ class _CompareRowState extends State<_CompareRow> {
             ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-/// "1300" / "12.50" for an amount box; blank for null.
-String formatAmountField(double? v) => v == null
-    ? ''
-    : v == v.roundToDouble()
-    ? v.toStringAsFixed(0)
-    : v.toStringAsFixed(2);
-
-// ---------------------------------------------------------------------------
-// "Add budget" pop-up
-// ---------------------------------------------------------------------------
-
-/// Centered pop-up asking what the user spends in each category. Uses the
-/// same numbers as Budget → Compare; blank boxes are left out.
-/// After a Save, if no income has been entered yet, asks for it next.
-Future<void> showBudgetDialog(BuildContext context, ExpenseStore store) async {
-  final saved = await showDialog<bool>(
-    context: context,
-    builder: (_) => _BudgetDialog(store: store),
-  );
-  if (saved == true && !store.hasIncome && context.mounted) {
-    await showIncomeDialog(context, store);
-  }
-}
-
-class _BudgetDialog extends StatefulWidget {
-  const _BudgetDialog({required this.store});
-
-  final ExpenseStore store;
-
-  @override
-  State<_BudgetDialog> createState() => _BudgetDialogState();
-}
-
-class _BudgetDialogState extends State<_BudgetDialog> {
-  late final Map<String, TextEditingController> _boxes = {
-    for (final c in budgetCategories)
-      c.id: TextEditingController(
-        text: formatAmountField(widget.store.actualSpending[c.id]),
-      ),
-  };
-
-  @override
-  void dispose() {
-    for (final c in _boxes.values) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _save() {
-    final amounts = <String, double>{};
-    for (final e in _boxes.entries) {
-      final v = double.tryParse(e.value.text.replaceAll(',', '').trim());
-      // Blank or 0 means "no input": left off the current budget.
-      if (v != null && v > 0) amounts[e.key] = v;
-    }
-    widget.store.setAllActualSpending(amounts);
-    Navigator.pop(context, true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.colors;
-
-    return Dialog(
-      backgroundColor: c.pill,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 32),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
-              child: Text(
-                'Your current budget',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                'What do you spend each month? Leave a box blank to skip it.',
-                style: TextStyle(fontSize: 13, color: c.muted),
-              ),
-            ),
-            Flexible(
-              child: ListView(
-                shrinkWrap: true,
-                padding: const EdgeInsets.fromLTRB(20, 4, 20, 8),
-                children: [
-                  for (final group in BudgetGroup.values) ...[
-                    Padding(
-                      padding: const EdgeInsets.only(top: 10, bottom: 6),
-                      child: Text(
-                        group.label,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w700,
-                          color: _groupAccent(context, group),
-                        ),
-                      ),
-                    ),
-                    for (final cat in budgetCategories)
-                      if (cat.group == group)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 8),
-                          child: Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  cat.name,
-                                  style: TextStyle(fontSize: 14, color: c.text),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              SizedBox(
-                                width: 120,
-                                child: TextField(
-                                  key: ValueKey('dialog-${cat.id}'),
-                                  controller: _boxes[cat.id],
-                                  keyboardType:
-                                      const TextInputType.numberWithOptions(
-                                        decimal: true,
-                                      ),
-                                  inputFormatters: [
-                                    FilteringTextInputFormatter.allow(
-                                      RegExp(r'[0-9.,]'),
-                                    ),
-                                  ],
-                                  textAlign: TextAlign.right,
-                                  decoration: InputDecoration(
-                                    isDense: true,
-                                    prefixText: '\$ ',
-                                    hintText: '0',
-                                    border: const OutlineInputBorder(),
-                                    contentPadding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                      horizontal: 10,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                  ],
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 16, 16),
-              child: Row(
-                children: [
-                  const Spacer(),
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 4),
-                  FilledButton(onPressed: _save, child: const Text('Save')),
-                ],
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

@@ -7,14 +7,15 @@ import 'budget.dart';
 import 'models.dart';
 
 /// Current app version, shown on App Info.
-const appVersion = '1.2.1';
+const appVersion = '1.3';
 
-/// What kind of release [appVersion] is (shown next to it on App Info).
-const appReleaseNote = 'Hotfix';
+/// What kind of release [appVersion] is, shown next to it on App Info
+/// (e.g. 'Hotfix'); empty for a regular release.
+const appReleaseNote = '';
 
 /// The release whose "what's new" pop-up existing users get once. Hotfixes
 /// don't change it, so they don't bring the pop-up back.
-const noticeVersion = '1.2';
+const noticeVersion = '1.3';
 
 /// App state + persistence. Widgets listen to it with ListenableBuilder.
 class ExpenseStore extends ChangeNotifier {
@@ -72,17 +73,24 @@ class ExpenseStore extends ChangeNotifier {
   /// count even when the recommended budget is counted.
   final Set<String> recommendedOff = {};
 
-  /// Current budget folder on home (built from [actualSpending]) and
-  /// whether it counts in totals.
+  /// The user's budget folders (from the guided tour) on home, and whether
+  /// they count in totals.
   bool currentOnHome = true;
   bool currentCounts = true;
 
-  /// What the user says they really spend per month, by category id
-  /// (Budget tab → Compare). Missing = not filled in.
-  final Map<String, double> actualSpending = {};
+  /// Accessibility: text size multiplier (1.0 = designed size). Slightly
+  /// larger by default for readability on small screens.
+  double textScale = defaultTextScale;
+  static const defaultTextScale = 1.1;
+  static const minTextScale = 0.85;
+  static const maxTextScale = 1.6;
 
   /// Settings toggle: show "Remaining Income" (income - expenses) on home.
   bool showWhatsLeft = true;
+
+  /// Settings toggle (off by default): under Monthly Expense, also show the
+  /// daily / weekly / yearly costs in their own amounts.
+  bool showCycleCosts = false;
 
   /// Settings toggle: dark (default, the original look) or light mode.
   bool darkMode = false;
@@ -141,30 +149,138 @@ class ExpenseStore extends ChangeNotifier {
             .fold(0, (sum, l) => sum + l.amount)
       : 0;
 
-  /// The user's own budget: categories with an amount entered, in the
-  /// standard category order.
-  List<(BudgetCategory, double)> get currentBudget => [
-    for (final c in budgetCategories)
-      if (actualSpending[c.id] case final amount?) (c, amount),
-  ];
-
-  /// True when the current-budget folder is on home and set to count.
+  /// True when the budget folders are on home and set to count.
   bool get currentIsCounted => currentOnHome && currentCounts;
 
-  /// What the current-budget folder adds to totals (0 unless counted).
-  double get currentContribution =>
-      currentIsCounted ? currentBudget.fold(0, (sum, e) => sum + e.$2) : 0;
+  /// Budget folders only count when [currentIsCounted]; everything else
+  /// always counts.
+  bool countsInTotals(Folder f) =>
+      f.type != FolderType.budget || currentIsCounted;
+
+  /// What the user really spends in a recommended category, from every item
+  /// tagged with it (budget folders, savings plan, subscriptions...).
+  /// null when nothing is tagged with it.
+  double? categorySpending(String categoryId) {
+    double? sum;
+    for (final f in folders) {
+      if (f.paused) continue;
+      for (final file in f.files) {
+        if (file.category == categoryId) {
+          sum = (sum ?? 0) + file.monthlyValue;
+        }
+      }
+    }
+    return sum;
+  }
+
+  /// Every active item tagged with [categoryId], with the folder it's in
+  /// (what the Compare tab's Edit mode lets you change).
+  List<(Folder, EntryFile)> categoryItems(String categoryId) => [
+    for (final f in folders)
+      if (!f.paused)
+        for (final file in f.files)
+          if (file.category == categoryId && !file.paused) (f, file),
+  ];
+
+  /// Saves the Compare tab's Edit mode in one go:
+  /// [items] new monthly amounts for existing items (null or 0 = remove it),
+  /// [added] amounts for categories that had no items yet; these go in a
+  /// "My budget" folder.
+  void applyCompareEdits({
+    required Map<EntryFile, double?> items,
+    required Map<String, double> added,
+  }) {
+    items.forEach((file, monthly) {
+      final folder = folders.firstWhere((f) => f.files.contains(file));
+      if (monthly == null || monthly <= 0) {
+        folder.files.remove(file);
+      } else {
+        file.value = monthly / file.cycle.perMonth;
+      }
+    });
+    if (added.isNotEmpty) {
+      var mine = folders
+          .where(
+            (f) =>
+                f.type == FolderType.budget &&
+                f.tourKey == null &&
+                f.name == 'My budget',
+          )
+          .firstOrNull;
+      if (mine == null) {
+        mine = Folder(name: 'My budget', type: FolderType.budget);
+        folders.add(mine);
+      }
+      added.forEach((id, monthly) {
+        final cat = budgetCategories.firstWhere((c) => c.id == id);
+        mine!.files.add(
+          EntryFile(name: cat.name, value: monthly, category: id),
+        );
+      });
+    }
+    // Budget folders emptied by the edit are removed.
+    folders.removeWhere((f) => f.type == FolderType.budget && f.files.isEmpty);
+    _changed();
+  }
+
+  /// Savings after a year: what's saved so far plus 12 months of deposits,
+  /// across the Savings container (paused items/folders add no deposits).
+  double get savingsInAYear => folders
+      .where((f) => f.type == FolderType.savings)
+      .expand((f) => f.files.map((file) => (f, file)))
+      .fold(
+        0,
+        (sum, e) =>
+            sum +
+            (e.$2.saved ?? 0) +
+            (e.$1.paused ? 0 : e.$2.monthlyValue * 12),
+      );
 
   /// The Budget container on home is shown when either budget folder is.
   bool get showsBudgetSection =>
       currentOnHome || (showRecommended && recommendedOnHome && hasIncome);
 
+  // ---------- Guided tour ----------
+
+  /// The folder a tour step made, if any.
+  Folder? tourFolder(String key) =>
+      folders.where((f) => f.tourKey == key).firstOrNull;
+
+  /// Saves one tour step: replaces that step's folder items with [items]
+  /// (creating the folder if needed, removing it when empty).
+  void saveTourFolder({
+    required String key,
+    required String name,
+    required FolderType type,
+    required List<EntryFile> items,
+  }) {
+    final existing = tourFolder(key);
+    if (items.isEmpty) {
+      if (existing != null) folders.remove(existing);
+    } else if (existing == null) {
+      folders.add(Folder(name: name, type: type, tourKey: key, files: items));
+    } else {
+      existing.files
+        ..clear()
+        ..addAll(items);
+    }
+    _changed();
+  }
+
+  /// Adds subscriptions entered in the tour to the Subscriptions container.
+  void addSubscriptions(List<EntryFile> items) {
+    if (items.isEmpty) return;
+    subscriptions.files.addAll(items);
+    _changed();
+  }
+
   /// Expense_Total: expenses + subscriptions + savings flagged as expenses
   /// (+ the recommended budget when it is set to count).
   double get expenseTotal =>
-      folders.fold<double>(0, (sum, f) => sum + f.expenseContribution) +
-      recommendedContribution +
-      currentContribution;
+      folders
+          .where(countsInTotals)
+          .fold<double>(0, (sum, f) => sum + f.expenseContribution) +
+      recommendedContribution;
 
   /// Total going toward savings each month.
   double get savingsTotal =>
@@ -181,9 +297,10 @@ class ExpenseStore extends ChangeNotifier {
 
   /// Everything paid out of income: expenses + savings flagged "from income".
   double get incomeUsed =>
-      folders.fold<double>(0, (sum, f) => sum + f.incomeContribution) +
-      recommendedContribution +
-      currentContribution;
+      folders
+          .where(countsInTotals)
+          .fold<double>(0, (sum, f) => sum + f.incomeContribution) +
+      recommendedContribution;
 
   /// The real (visible) folders in a container.
   Iterable<Folder> foldersOf(FolderType t) =>
@@ -301,27 +418,14 @@ class ExpenseStore extends ChangeNotifier {
     _changed();
   }
 
-  /// Replaces all entered spending at once (the "Add budget" pop-up).
-  void setAllActualSpending(Map<String, double> amounts) {
-    actualSpending
-      ..clear()
-      ..addAll(amounts);
+  void setTextScale(double v) {
+    textScale = v.clamp(minTextScale, maxTextScale);
     _changed();
   }
 
   /// Switches one recommended line on/off for the totals.
   void setRecommendedLineOn(String id, bool on) {
     on ? recommendedOff.remove(id) : recommendedOff.add(id);
-    _changed();
-  }
-
-  /// Saves what the user spends in a category; null clears it.
-  void setActualSpending(String id, double? amount) {
-    if (amount == null) {
-      actualSpending.remove(id);
-    } else {
-      actualSpending[id] = amount;
-    }
     _changed();
   }
 
@@ -351,6 +455,28 @@ class ExpenseStore extends ChangeNotifier {
     _changed();
   }
 
+  void setShowCycleCosts(bool v) {
+    showCycleCosts = v;
+    _changed();
+  }
+
+  /// Costs in Monthly Expense that aren't charged monthly, added up per
+  /// cycle in their own amounts (e.g. daily → $5 a day). Paused items and
+  /// savings are left out.
+  Map<BillingCycle, double> get cycleCosts {
+    final out = <BillingCycle, double>{};
+    for (final f in folders) {
+      if (f.paused || f.type == FolderType.savings || !countsInTotals(f)) {
+        continue;
+      }
+      for (final file in f.files) {
+        if (file.paused || file.cycle == BillingCycle.monthly) continue;
+        out[file.cycle] = (out[file.cycle] ?? 0) + file.value;
+      }
+    }
+    return {for (final c in BillingCycle.values) c: ?out[c]};
+  }
+
   void setShowWhatsLeft(bool v) {
     showWhatsLeft = v;
     _changed();
@@ -367,6 +493,7 @@ class ExpenseStore extends ChangeNotifier {
     'payAmount': payAmount,
     'payFrequency': payFrequency.name,
     'showWhatsLeft': showWhatsLeft,
+    'showCycleCosts': showCycleCosts,
     'darkMode': darkMode,
     'seenWelcome': seenWelcome,
     'seenVersion': seenVersion,
@@ -378,7 +505,7 @@ class ExpenseStore extends ChangeNotifier {
     'recommendedOff': recommendedOff.toList(),
     'currentOnHome': currentOnHome,
     'currentCounts': currentCounts,
-    'actualSpending': actualSpending,
+    'textScale': textScale,
     'folders': folders.map((f) => f.toJson()).toList(),
   };
 
@@ -402,6 +529,7 @@ class ExpenseStore extends ChangeNotifier {
       payAmount = legacyMonthly;
     }
     showWhatsLeft = j['showWhatsLeft'] as bool? ?? true;
+    showCycleCosts = j['showCycleCosts'] as bool? ?? false;
     darkMode = j['darkMode'] as bool? ?? false;
     seenWelcome = j['seenWelcome'] as bool? ?? true;
     seenVersion = j['seenVersion'] as String?;
@@ -418,12 +546,8 @@ class ExpenseStore extends ChangeNotifier {
     recommendedOff
       ..clear()
       ..addAll((j['recommendedOff'] as List? ?? const []).cast<String>());
-    actualSpending
-      ..clear()
-      ..addAll({
-        for (final e in (j['actualSpending'] as Map? ?? const {}).entries)
-          e.key as String: (e.value as num).toDouble(),
-      });
+    textScale = ((j['textScale'] as num?)?.toDouble() ?? defaultTextScale)
+        .clamp(minTextScale, maxTextScale);
     folders
       ..clear()
       ..addAll(
@@ -431,7 +555,38 @@ class ExpenseStore extends ChangeNotifier {
           (e) => Folder.fromJson(Map<String, dynamic>.from(e as Map)),
         ),
       );
+    _migrateLegacyBudget(j['actualSpending'] as Map?);
     _normalizeSubscriptions();
+  }
+
+  /// Before 1.3 the budget was one amount per category. Turn those into a
+  /// "My budget" folder so nothing is lost (and Compare still adds up).
+  void _migrateLegacyBudget(Map? legacy) {
+    if (legacy == null || legacy.isEmpty) return;
+    if (folders.any((f) => f.type == FolderType.budget)) return;
+    // Old combined categories map onto their new, separate ones.
+    const renamed = {
+      'phone-internet': ('phone', 'Phone & internet'),
+      'toiletries-personal-care': ('toiletries', 'Toiletries & personal care'),
+      'emergency-fund-savings': ('emergency-fund', 'Emergency fund & savings'),
+      'retirement-extra-debt-payments': (
+        'retirement',
+        'Retirement & extra debt payments',
+      ),
+    };
+    final items = <EntryFile>[];
+    for (final e in legacy.entries) {
+      final id = e.key as String;
+      final amount = (e.value as num).toDouble();
+      if (amount <= 0) continue;
+      final known = budgetCategories.where((c) => c.id == id).firstOrNull;
+      final (newId, name) = renamed[id] ?? (id, known?.name ?? id);
+      items.add(EntryFile(name: name, value: amount, category: newId));
+    }
+    if (items.isEmpty) return;
+    folders.add(
+      Folder(name: 'My budget', type: FolderType.budget, files: items),
+    );
   }
 
   /// Every container has one hidden "loose" list for items added straight
@@ -439,7 +594,7 @@ class ExpenseStore extends ChangeNotifier {
   /// subscription folders are merged into it (keeping every item; paused
   /// folders pause their items so totals don't change).
   void _normalizeSubscriptions() {
-    for (final t in FolderType.values) {
+    for (final t in FolderType.containers) {
       final group = folders
           .where(
             (f) => f.type == t && (f.loose || t == FolderType.subscription),

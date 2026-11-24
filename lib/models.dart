@@ -11,12 +11,20 @@ library;
 enum FolderType {
   expense('Expenses'),
   subscription('Subscriptions'),
-  savings('Savings');
+  savings('Savings'),
+
+  /// Folders made by the guided tour (Housing, Needs...), shown in the
+  /// Budget container at the top of home.
+  budget('Budget');
 
   const FolderType(this.label);
 
   /// Section title on the home page.
   final String label;
+
+  /// The containers listed under Budget on home, in order (each has its own
+  /// show/hide switch in Settings).
+  static const containers = [expense, subscription, savings];
 }
 
 /// How the user's money comes in. The entered amount is per paycheck
@@ -48,6 +56,7 @@ enum PayFrequency {
 
 /// How often a subscription is charged. Totals are always per month.
 enum BillingCycle {
+  daily('Daily', 'day', 30),
   weekly('Weekly', 'wk', 4),
   monthly('Monthly', 'mo', 1),
   quarterly('Every 3 months', 'qtr', 1 / 3),
@@ -59,8 +68,12 @@ enum BillingCycle {
   /// Short suffix shown after a price, e.g. "$9.99 / mo".
   final String short;
 
-  /// How many charges fall in an average month.
+  /// How many charges fall in an average month (a month = 30 days or
+  /// 4 weeks, matching the pay math).
   final double perMonth;
+
+  /// The choices offered for a regular expense.
+  static const forExpenses = [daily, weekly, monthly, yearly];
 }
 
 /// Strips the time so day math works in whole calendar days.
@@ -80,6 +93,9 @@ class EntryFile {
     this.includeAsMonthlyExpense = false,
     this.paused = false,
     this.cycle = BillingCycle.monthly,
+    this.category,
+    this.saved,
+    this.tourItem,
   }) : id = id ?? newId();
 
   final String id;
@@ -104,6 +120,18 @@ class EntryFile {
   /// Subscriptions only: how often it is charged.
   BillingCycle cycle;
 
+  /// Recommended-budget category this belongs to (e.g. "utilities"), so the
+  /// Compare tab can total real spending per category. null = none.
+  String? category;
+
+  /// Savings only: how much has been saved so far (shown next to the item;
+  /// used for "in a year").
+  double? saved;
+
+  /// Which guided-tour line made this item (e.g. "housing.rent"), so running
+  /// the tour again updates it instead of adding a duplicate.
+  String? tourItem;
+
   /// What this item costs in an average month (0 when paused).
   double get monthlyValue => paused ? 0 : value * cycle.perMonth;
 
@@ -125,6 +153,9 @@ class EntryFile {
     'includeAsMonthlyExpense': includeAsMonthlyExpense,
     'paused': paused,
     'cycle': cycle.name,
+    'category': category,
+    'saved': saved,
+    'tourItem': tourItem,
   };
 
   factory EntryFile.fromJson(Map<String, dynamic> j) => EntryFile(
@@ -142,6 +173,9 @@ class EntryFile {
       (c) => c.name == j['cycle'],
       orElse: () => BillingCycle.monthly,
     ),
+    category: j['category'] as String?,
+    saved: (j['saved'] as num?)?.toDouble(),
+    tourItem: j['tourItem'] as String?,
   );
 }
 
@@ -156,6 +190,7 @@ class Folder {
     this.collapsed = false,
     this.paused = false,
     this.loose = false,
+    this.tourKey,
     List<EntryFile>? files,
   }) : id = id ?? newId(),
        files = files ?? [];
@@ -178,6 +213,10 @@ class Folder {
   /// The hidden list for items added straight to a container (no folder).
   /// Never shown as a folder itself.
   final bool loose;
+
+  /// Which guided-tour step made this folder (e.g. "housing"); lets the tour
+  /// find and update it later.
+  final String? tourKey;
 
   final List<EntryFile> files;
 
@@ -216,6 +255,7 @@ class Folder {
     'collapsed': collapsed,
     'paused': paused,
     'loose': loose,
+    'tourKey': tourKey,
     'files': files.map((f) => f.toJson()).toList(),
   };
 
@@ -231,6 +271,7 @@ class Folder {
     collapsed: j['collapsed'] as bool? ?? false,
     paused: j['paused'] as bool? ?? false,
     loose: j['loose'] as bool? ?? false,
+    tourKey: j['tourKey'] as String?,
     files: (j['files'] as List? ?? [])
         .map((e) => EntryFile.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList(),

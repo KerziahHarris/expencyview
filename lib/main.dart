@@ -32,7 +32,8 @@ class ExpenseApp extends StatelessWidget {
         theme: buildTheme(Brightness.light),
         darkTheme: buildTheme(Brightness.dark),
         themeMode: store.darkMode ? ThemeMode.dark : ThemeMode.light,
-        builder: (context, child) => UiScale(child: child!),
+        builder: (context, child) =>
+            UiScale(textScale: store.textScale, child: child!),
         home: AppShell(store: store),
       ),
     );
@@ -42,9 +43,12 @@ class ExpenseApp extends StatelessWidget {
 /// Draws the whole app (pages, sheets, dialogs) at [kUiScale] of its normal
 /// size, like zooming a web page out, so it fits small screens better.
 class UiScale extends StatelessWidget {
-  const UiScale({super.key, required this.child});
+  const UiScale({super.key, required this.child, this.textScale = 1});
 
   final Widget child;
+
+  /// Accessibility text size on top of the whole-app zoom.
+  final double textScale;
 
   @override
   Widget build(BuildContext context) {
@@ -58,6 +62,7 @@ class UiScale extends StatelessWidget {
         viewPadding: mq.viewPadding / s,
         viewInsets: mq.viewInsets / s,
         devicePixelRatio: mq.devicePixelRatio * s,
+        textScaler: TextScaler.linear(mq.textScaler.scale(1) * textScale),
       ),
       child: ClipRect(
         child: OverflowBox(
@@ -103,25 +108,16 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
   Timer? _expiryTimer;
   bool _welcomeOpen = false;
 
-  /// Shows the welcome pop-up for a first-time user (also after "Clear all
-  /// data"), or the one-time update pop-up for an existing user, once the
-  /// current frame is drawn.
+  /// Shows the one-time update pop-up for an existing user, once the
+  /// current frame is drawn. (New users get the full welcome screen.)
   void _maybeWelcome(ExpenseStore store) {
-    if (_welcomeOpen) return;
-    if (store.seenWelcome && !store.needsUpdateNotice) return;
+    if (_welcomeOpen || !store.needsUpdateNotice) return;
     _welcomeOpen = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
       setState(() => _tab = AppTab.home);
-      if (!store.seenWelcome) {
-        await showWelcome(context, store);
-      } else {
-        // Existing user, first launch of this version.
-        await showUpdateNotice(context, store);
-      }
+      await showUpdateNotice(context, store);
       _welcomeOpen = false;
-      // "Start fresh" makes them a new user: welcome them next.
-      if (mounted && !store.seenWelcome) _maybeWelcome(store);
     });
   }
 
@@ -163,6 +159,8 @@ class _AppShellState extends State<AppShell> with WidgetsBindingObserver {
     return ListenableBuilder(
       listenable: store,
       builder: (context, _) {
+        // First time (or after "Clear all data"): the welcome screen.
+        if (!store.seenWelcome) return WelcomeScreen(store: store);
         _maybeWelcome(store);
         final tabs = _tabs(store);
         final tab = tabs.contains(_tab) ? _tab : AppTab.home;
