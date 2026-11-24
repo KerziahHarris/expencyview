@@ -343,8 +343,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Compare'));
     await tester.pumpAndSettle();
-    expect(find.text('people'), findsNothing); // 1 person
-    expect(find.text('person'), findsOneWidget);
+    expect(find.text('People'), findsNothing); // 1 person
+    expect(find.text('Person'), findsOneWidget);
 
     await tester.tap(find.text('Edit'));
     await tester.pumpAndSettle();

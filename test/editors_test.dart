@@ -282,7 +282,7 @@ void main() {
     await tester.tap(find.text('Apply changes'));
     await tester.pumpAndSettle();
     expect(store.householdSize, 12);
-    expect(find.text('people'), findsOneWidget);
+    expect(find.text('People'), findsOneWidget);
 
     // Read-only folder on home, guide only by default.
     store.setRecommendedOnHome(true);
